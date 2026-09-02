@@ -129,6 +129,14 @@ public class SyncPayloadBuilder
     /// (watched, collection) leave this null.
     /// </param>
     /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="allowRemovals">
+    /// When false, skip computing/pushing removals entirely and merge
+    /// (rather than replace) the known-items map, so items that are only
+    /// transiently invisible (e.g. a network mount outage) aren't recorded
+    /// as gone and don't get diffed as a mass removal on a later run. Used
+    /// by collection sync's safety guard; defaults to true (the every-other-
+    /// category behavior).
+    /// </param>
     /// <returns>How many items were pushed as added/removed.</returns>
     public async Task<PushResult> DiffAndReconcileAsync(
         Guid userId,
@@ -137,7 +145,8 @@ public class SyncPayloadBuilder
         Func<IReadOnlyCollection<KnownSyncItem>, Task> pushAdd,
         Func<IReadOnlyCollection<KnownSyncItem>, Task> pushRemove,
         Func<KnownSyncItem, KnownSyncItem, bool>? valueChanged,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool allowRemovals = true)
     {
         var known = await _stateStore.GetKnownItemsAsync(userId, category, cancellationToken).ConfigureAwait(false);
 
@@ -151,11 +160,14 @@ public class SyncPayloadBuilder
         }
 
         var toRemove = new List<KnownSyncItem>();
-        foreach (var (key, item) in known)
+        if (allowRemovals)
         {
-            if (!currentItems.ContainsKey(key))
+            foreach (var (key, item) in known)
             {
-                toRemove.Add(item);
+                if (!currentItems.ContainsKey(key))
+                {
+                    toRemove.Add(item);
+                }
             }
         }
 
@@ -169,7 +181,20 @@ public class SyncPayloadBuilder
             await pushRemove(toRemove).ConfigureAwait(false);
         }
 
-        await _stateStore.SetKnownItemsAsync(userId, category, currentItems, cancellationToken).ConfigureAwait(false);
+        if (allowRemovals)
+        {
+            await _stateStore.SetKnownItemsAsync(userId, category, currentItems, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            var merged = new Dictionary<string, KnownSyncItem>(known, StringComparer.Ordinal);
+            foreach (var (key, item) in currentItems)
+            {
+                merged[key] = item;
+            }
+
+            await _stateStore.SetKnownItemsAsync(userId, category, merged, cancellationToken).ConfigureAwait(false);
+        }
 
         return new PushResult { PushedAdd = toAdd.Count, PushedRemove = toRemove.Count };
     }

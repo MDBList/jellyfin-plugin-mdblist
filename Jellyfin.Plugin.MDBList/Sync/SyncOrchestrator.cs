@@ -23,8 +23,9 @@ namespace Jellyfin.Plugin.MDBList.Sync;
 /// a scheduled pull both go through <see cref="TryLock"/> so neither can
 /// race the other's writes to the same item.
 ///
-/// Watched and ratings sync are wired in; collection slots into the same
-/// push-then-pull shape in a later phase.
+/// Watched, ratings, and collection sync are all wired in. Collection is
+/// push-only -- see <see cref="CollectionSync"/> -- so it has no place in
+/// CheckActivityAsync's pull-gating logic below, only in the full run.
 /// </summary>
 public sealed class SyncOrchestrator : IDisposable
 {
@@ -40,6 +41,7 @@ public sealed class SyncOrchestrator : IDisposable
     private readonly SyncStateStore _stateStore;
     private readonly WatchedSync _watchedSync;
     private readonly RatingsSync _ratingsSync;
+    private readonly CollectionSync _collectionSync;
     private readonly ILogger<SyncOrchestrator> _logger;
 
     /// <summary>
@@ -53,6 +55,7 @@ public sealed class SyncOrchestrator : IDisposable
     /// <param name="stateStore">Instance of the <see cref="SyncStateStore"/>.</param>
     /// <param name="watchedSync">Instance of the <see cref="WatchedSync"/>.</param>
     /// <param name="ratingsSync">Instance of the <see cref="RatingsSync"/>.</param>
+    /// <param name="collectionSync">Instance of the <see cref="CollectionSync"/>.</param>
     /// <param name="logger">Instance of the <see cref="ILogger{SyncOrchestrator}"/> interface.</param>
     public SyncOrchestrator(
         IUserManager userManager,
@@ -63,6 +66,7 @@ public sealed class SyncOrchestrator : IDisposable
         SyncStateStore stateStore,
         WatchedSync watchedSync,
         RatingsSync ratingsSync,
+        CollectionSync collectionSync,
         ILogger<SyncOrchestrator> logger)
     {
         _userManager = userManager;
@@ -73,6 +77,7 @@ public sealed class SyncOrchestrator : IDisposable
         _stateStore = stateStore;
         _watchedSync = watchedSync;
         _ratingsSync = ratingsSync;
+        _collectionSync = collectionSync;
         _logger = logger;
     }
 
@@ -135,10 +140,11 @@ public sealed class SyncOrchestrator : IDisposable
             var ratingsPush = await _ratingsSync.PushAsync(user.Id, accessToken, snapshot, cancellationToken).ConfigureAwait(false);
             var ratingsPull = await _ratingsSync.PullAsync(user.Id, accessToken, user, snapshot, activities.ServerTime, cancellationToken)
                 .ConfigureAwait(false);
+            var collectionPush = await _collectionSync.PushAsync(user.Id, accessToken, snapshot, cancellationToken).ConfigureAwait(false);
 
             _logger.LogInformation(
                 "MDBList Sync: run complete - watched push +{WAdd}/-{WRemove} pull {WApplied} ({WMode}), "
-                    + "ratings push +{RAdd}/-{RRemove} pull {RApplied} ({RMode})",
+                    + "ratings push +{RAdd}/-{RRemove} pull {RApplied} ({RMode}), collection push +{CAdd}/-{CRemove}",
                 watchedPush.PushedAdd,
                 watchedPush.PushedRemove,
                 watchedPull.PulledApplied,
@@ -146,7 +152,9 @@ public sealed class SyncOrchestrator : IDisposable
                 ratingsPush.PushedAdd,
                 ratingsPush.PushedRemove,
                 ratingsPull.PulledApplied,
-                ratingsPull.Mode);
+                ratingsPull.Mode,
+                collectionPush.PushedAdd,
+                collectionPush.PushedRemove);
 
             return true;
         }
