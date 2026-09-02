@@ -1,0 +1,20 @@
+[
+    {
+        "guid": "cbca79d7-ecde-4030-833c-3862f3c3a737",
+        "name": "MDBList",
+        "description": "Syncs watched status and ratings two-way between Jellyfin and MDBList, and pushes library/collection membership to MDBList. Uses MDBList's incremental sync API (last_activities + journal) for cheap, cursor-based updates instead of full-library reconciliation on every run.\n",
+        "overview": "Two-way sync of watched status and ratings, plus collection sync, against MDBList",
+        "owner": "linaspurinis",
+        "category": "General",
+        "versions": [
+            {
+                "version": "1.0.0.0",
+                "changelog": "1.0.0.0: Initial release. Two-way sync of watched status and ratings, push-only collection sync, live playback scrobbling to MDBList's /scrobble endpoints, OAuth device-code authentication, incremental cursor-based pulls with automatic full-reconciliation fallback, a 24h scheduled full sync plus a 15-minute activity-gated cheap poll, and a config page for connecting your account and choosing what to sync.\n",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://github.com/linaspurinis/jellyfin-plugin-mdblist/releases/download/v1.0.0.0/mdblist_1.0.0.0.zip",
+                "checksum": "02b9523882974d9011e2a299bb11efb7",
+                "timestamp": "2026-09-02T16:38:56Z"
+            }
+        ]
+    }
+]
