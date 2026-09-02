@@ -105,6 +105,7 @@ public class LibrarySnapshot
             var userData = userDataManager.GetUserData(user, item);
             var record = new SnapshotItem
             {
+                Type = "movie",
                 ItemId = item.Id,
                 Title = item.Name,
                 Ids = ids,
@@ -163,6 +164,7 @@ public class LibrarySnapshot
             {
                 var record = new SnapshotItem
                 {
+                    Type = "episode",
                     ItemId = episode.Id,
                     Title = episode.Name,
                     Ids = showIds,

@@ -1,4 +1,6 @@
 using Jellyfin.Plugin.MDBList.Api;
+using Jellyfin.Plugin.MDBList.Events;
+using Jellyfin.Plugin.MDBList.Sync;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Plugins;
 using Microsoft.Extensions.DependencyInjection;
@@ -15,5 +17,11 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
     {
         serviceCollection.AddSingleton<MDBListApiClient>();
         serviceCollection.AddSingleton<OAuthService>();
+        serviceCollection.AddSingleton<SyncStateStore>();
+        serviceCollection.AddSingleton<SyncOrchestrator>();
+        serviceCollection.AddSingleton<SyncPayloadBuilder>();
+        serviceCollection.AddSingleton<WatchedSync>();
+        serviceCollection.AddSingleton<LiveSyncService>();
+        serviceCollection.AddHostedService<MDBListEventHostedService>();
     }
 }

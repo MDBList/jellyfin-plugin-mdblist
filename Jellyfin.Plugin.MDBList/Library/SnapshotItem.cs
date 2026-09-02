@@ -10,6 +10,11 @@ namespace Jellyfin.Plugin.MDBList.Library;
 public class SnapshotItem
 {
     /// <summary>
+    /// Gets the item type: "movie" or "episode".
+    /// </summary>
+    public required string Type { get; init; }
+
+    /// <summary>
     /// Gets the Jellyfin item id.
     /// </summary>
     public required Guid ItemId { get; init; }
