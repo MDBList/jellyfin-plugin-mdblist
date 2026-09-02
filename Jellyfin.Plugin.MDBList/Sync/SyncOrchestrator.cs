@@ -23,12 +23,13 @@ namespace Jellyfin.Plugin.MDBList.Sync;
 /// a scheduled pull both go through <see cref="TryLock"/> so neither can
 /// race the other's writes to the same item.
 ///
-/// Only watched sync is wired in so far; ratings/collection slot into the
-/// same push-then-pull shape in later phases.
+/// Watched and ratings sync are wired in; collection slots into the same
+/// push-then-pull shape in a later phase.
 /// </summary>
 public sealed class SyncOrchestrator : IDisposable
 {
     private static readonly string[] WatchedActivityKeys = ["watched_at", "season_watched_at", "episode_watched_at"];
+    private static readonly string[] RatingActivityKeys = ["rated_at"];
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly IUserManager _userManager;
@@ -38,6 +39,7 @@ public sealed class SyncOrchestrator : IDisposable
     private readonly MDBListApiClient _apiClient;
     private readonly SyncStateStore _stateStore;
     private readonly WatchedSync _watchedSync;
+    private readonly RatingsSync _ratingsSync;
     private readonly ILogger<SyncOrchestrator> _logger;
 
     /// <summary>
@@ -50,6 +52,7 @@ public sealed class SyncOrchestrator : IDisposable
     /// <param name="apiClient">Instance of the <see cref="MDBListApiClient"/>.</param>
     /// <param name="stateStore">Instance of the <see cref="SyncStateStore"/>.</param>
     /// <param name="watchedSync">Instance of the <see cref="WatchedSync"/>.</param>
+    /// <param name="ratingsSync">Instance of the <see cref="RatingsSync"/>.</param>
     /// <param name="logger">Instance of the <see cref="ILogger{SyncOrchestrator}"/> interface.</param>
     public SyncOrchestrator(
         IUserManager userManager,
@@ -59,6 +62,7 @@ public sealed class SyncOrchestrator : IDisposable
         MDBListApiClient apiClient,
         SyncStateStore stateStore,
         WatchedSync watchedSync,
+        RatingsSync ratingsSync,
         ILogger<SyncOrchestrator> logger)
     {
         _userManager = userManager;
@@ -68,6 +72,7 @@ public sealed class SyncOrchestrator : IDisposable
         _apiClient = apiClient;
         _stateStore = stateStore;
         _watchedSync = watchedSync;
+        _ratingsSync = ratingsSync;
         _logger = logger;
     }
 
@@ -124,16 +129,24 @@ public sealed class SyncOrchestrator : IDisposable
             var snapshot = LibrarySnapshot.Build(_libraryManager, _userDataManager, user);
             var activities = await _apiClient.FetchLastActivitiesAsync(accessToken, cancellationToken).ConfigureAwait(false);
 
-            var pushResult = await _watchedSync.PushAsync(user.Id, accessToken, snapshot, cancellationToken).ConfigureAwait(false);
-            var pullResult = await _watchedSync.PullAsync(user.Id, accessToken, user, snapshot, activities.ServerTime, cancellationToken)
+            var watchedPush = await _watchedSync.PushAsync(user.Id, accessToken, snapshot, cancellationToken).ConfigureAwait(false);
+            var watchedPull = await _watchedSync.PullAsync(user.Id, accessToken, user, snapshot, activities.ServerTime, cancellationToken)
+                .ConfigureAwait(false);
+            var ratingsPush = await _ratingsSync.PushAsync(user.Id, accessToken, snapshot, cancellationToken).ConfigureAwait(false);
+            var ratingsPull = await _ratingsSync.PullAsync(user.Id, accessToken, user, snapshot, activities.ServerTime, cancellationToken)
                 .ConfigureAwait(false);
 
             _logger.LogInformation(
-                "MDBList Sync: run complete - watched push +{Add}/-{Remove}, pull {Applied} ({Mode})",
-                pushResult.PushedAdd,
-                pushResult.PushedRemove,
-                pullResult.PulledApplied,
-                pullResult.Mode);
+                "MDBList Sync: run complete - watched push +{WAdd}/-{WRemove} pull {WApplied} ({WMode}), "
+                    + "ratings push +{RAdd}/-{RRemove} pull {RApplied} ({RMode})",
+                watchedPush.PushedAdd,
+                watchedPush.PushedRemove,
+                watchedPull.PulledApplied,
+                watchedPull.Mode,
+                ratingsPush.PushedAdd,
+                ratingsPush.PushedRemove,
+                ratingsPull.PulledApplied,
+                ratingsPull.Mode);
 
             return true;
         }
@@ -189,14 +202,15 @@ public sealed class SyncOrchestrator : IDisposable
         // journal_at covers removals (it doesn't say which category) --
         // confirmed against api.mdblist's removal endpoints, which only
         // clear per-item state and separately bump journal_at. Without
-        // checking it too, an unwatch never trips this gate.
+        // checking it too, an unwatch/unrate never trips this gate.
         var journalAdvanced = AnyBucketAdvanced(seen, current, "journal_at");
         var watchedChanged = journalAdvanced || AnyBucketAdvanced(seen, current, WatchedActivityKeys);
+        var ratingsChanged = journalAdvanced || AnyBucketAdvanced(seen, current, RatingActivityKeys);
 
-        if (!watchedChanged)
+        if (!watchedChanged && !ratingsChanged)
         {
             // Advance the watermark only when there's nothing to follow up
-            // on. If the pull below fails, the watermark must stay put so
+            // on. If a pull below fails, the watermark must stay put so
             // this gets retried on the next check instead of silently
             // marked "seen" -- see the matching comment further down.
             await _stateStore.SetLastActivitiesSeenAsync(user.Id, current, cancellationToken).ConfigureAwait(false);
@@ -208,9 +222,25 @@ public sealed class SyncOrchestrator : IDisposable
 
         try
         {
-            var pullResult = await _watchedSync.PullAsync(user.Id, accessToken, user, snapshot, activities.ServerTime, cancellationToken)
-                .ConfigureAwait(false);
-            _logger.LogInformation("MDBList Sync: activity-triggered pull applied {Applied} ({Mode})", pullResult.PulledApplied, pullResult.Mode);
+            if (watchedChanged)
+            {
+                var watchedPull = await _watchedSync.PullAsync(user.Id, accessToken, user, snapshot, activities.ServerTime, cancellationToken)
+                    .ConfigureAwait(false);
+                _logger.LogInformation(
+                    "MDBList Sync: activity-triggered watched pull applied {Applied} ({Mode})",
+                    watchedPull.PulledApplied,
+                    watchedPull.Mode);
+            }
+
+            if (ratingsChanged)
+            {
+                var ratingsPull = await _ratingsSync.PullAsync(user.Id, accessToken, user, snapshot, activities.ServerTime, cancellationToken)
+                    .ConfigureAwait(false);
+                _logger.LogInformation(
+                    "MDBList Sync: activity-triggered ratings pull applied {Applied} ({Mode})",
+                    ratingsPull.PulledApplied,
+                    ratingsPull.Mode);
+            }
         }
         catch (MDBListApiException ex)
         {

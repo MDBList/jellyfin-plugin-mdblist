@@ -28,4 +28,16 @@ public class UserSyncConfig
     /// Gets or sets the access token's expiry, as Unix seconds.
     /// </summary>
     public long ExpiresAt { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether Jellyfin's thumbs-up/down
+    /// (<c>UserDataSaveReason.UpdateUserRating</c>, from the stock web UI's
+    /// like/dislike button) should be ignored rather than pushed as a 10 or
+    /// 1 rating. That button always writes exactly 10 or 1 regardless of
+    /// intent, which would otherwise silently overwrite (or create) a real
+    /// numeric MDBList rating. Genuine numeric ratings (e.g. from clients
+    /// like Infuse) go through UpdateUserData instead and are unaffected.
+    /// Defaults to on.
+    /// </summary>
+    public bool IgnoreThumbRatings { get; set; } = true;
 }

@@ -21,6 +21,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<SyncOrchestrator>();
         serviceCollection.AddSingleton<SyncPayloadBuilder>();
         serviceCollection.AddSingleton<WatchedSync>();
+        serviceCollection.AddSingleton<RatingsSync>();
         serviceCollection.AddSingleton<LiveSyncService>();
         serviceCollection.AddHostedService<MDBListEventHostedService>();
     }

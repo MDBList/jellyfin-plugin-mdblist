@@ -29,8 +29,15 @@ public class LiveSyncService
         UserDataSaveReason.PlaybackFinished,
     ];
 
+    private static readonly HashSet<UserDataSaveReason> RatingTriggerReasons =
+    [
+        UserDataSaveReason.UpdateUserRating,
+        UserDataSaveReason.UpdateUserData,
+    ];
+
     private readonly OAuthService _oauthService;
     private readonly WatchedSync _watchedSync;
+    private readonly RatingsSync _ratingsSync;
     private readonly SyncOrchestrator _orchestrator;
     private readonly ILogger<LiveSyncService> _logger;
 
@@ -39,12 +46,19 @@ public class LiveSyncService
     /// </summary>
     /// <param name="oauthService">Instance of the <see cref="OAuthService"/>.</param>
     /// <param name="watchedSync">Instance of the <see cref="WatchedSync"/>.</param>
+    /// <param name="ratingsSync">Instance of the <see cref="RatingsSync"/>.</param>
     /// <param name="orchestrator">Instance of the <see cref="SyncOrchestrator"/>.</param>
     /// <param name="logger">Instance of the <see cref="ILogger{LiveSyncService}"/> interface.</param>
-    public LiveSyncService(OAuthService oauthService, WatchedSync watchedSync, SyncOrchestrator orchestrator, ILogger<LiveSyncService> logger)
+    public LiveSyncService(
+        OAuthService oauthService,
+        WatchedSync watchedSync,
+        RatingsSync ratingsSync,
+        SyncOrchestrator orchestrator,
+        ILogger<LiveSyncService> logger)
     {
         _oauthService = oauthService;
         _watchedSync = watchedSync;
+        _ratingsSync = ratingsSync;
         _orchestrator = orchestrator;
         _logger = logger;
     }
@@ -68,11 +82,6 @@ public class LiveSyncService
             return;
         }
 
-        if (!WatchedTriggerReasons.Contains(e.SaveReason))
-        {
-            return;
-        }
-
         if (e.Item is not (Movie or Episode))
         {
             return;
@@ -84,10 +93,28 @@ public class LiveSyncService
             return;
         }
 
-        _ = Task.Run(() => HandleAsync(e.UserId, e.Item, e.UserData));
+        var pushWatched = WatchedTriggerReasons.Contains(e.SaveReason);
+        var pushRating = RatingTriggerReasons.Contains(e.SaveReason);
+
+        // The stock web UI's thumbs-up/down button always writes exactly
+        // 10 or 1 via UpdateUserRating, regardless of what the user
+        // actually intends -- pushing that as a real MDBList rating would
+        // silently overwrite (or invent) one. UpdateUserData (genuine
+        // numeric ratings, e.g. from Infuse) is unaffected.
+        if (pushRating && e.SaveReason == UserDataSaveReason.UpdateUserRating && linkedUserConfig.IgnoreThumbRatings)
+        {
+            pushRating = false;
+        }
+
+        if (!pushWatched && !pushRating)
+        {
+            return;
+        }
+
+        _ = Task.Run(() => HandleAsync(e.UserId, e.Item, e.UserData, pushWatched, pushRating));
     }
 
-    private async Task HandleAsync(Guid userId, BaseItem item, UserItemData userData)
+    private async Task HandleAsync(Guid userId, BaseItem item, UserItemData userData, bool pushWatched, bool pushRating)
     {
         using var handle = _orchestrator.TryLock();
         if (handle is null)
@@ -114,7 +141,15 @@ public class LiveSyncService
                 return;
             }
 
-            await _watchedSync.PushSingleAsync(userId, accessToken, record, CancellationToken.None).ConfigureAwait(false);
+            if (pushWatched)
+            {
+                await _watchedSync.PushSingleAsync(userId, accessToken, record, CancellationToken.None).ConfigureAwait(false);
+            }
+
+            if (pushRating)
+            {
+                await _ratingsSync.PushSingleAsync(userId, accessToken, record, CancellationToken.None).ConfigureAwait(false);
+            }
         }
         catch (MDBListApiException ex)
         {
