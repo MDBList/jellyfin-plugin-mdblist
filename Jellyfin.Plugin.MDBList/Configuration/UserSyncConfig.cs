@@ -68,4 +68,14 @@ public class UserSyncConfig
     /// redundant trigger off <c>ITaskManager.TaskCompleted</c>.
     /// </summary>
     public bool SyncAfterLibraryScan { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether live playback progress pushes
+    /// to MDBList's /scrobble/* endpoints -- port of Kodi's player_monitor.py.
+    /// Independent of <see cref="WatchedEnabled"/>: scrobbling is a
+    /// real-time progress feed the server uses for its own watched-marking
+    /// and "continue watching" position, not the /sync/watched
+    /// diff-and-reconcile flow -- either can be on without the other.
+    /// </summary>
+    public bool ScrobblingEnabled { get; set; } = true;
 }

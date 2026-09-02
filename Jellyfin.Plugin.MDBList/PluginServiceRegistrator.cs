@@ -25,6 +25,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<CollectionSync>();
         serviceCollection.AddSingleton<LiveSyncService>();
         serviceCollection.AddSingleton<LibraryChangeDebouncer>();
+        serviceCollection.AddSingleton<PlaybackScrobbleService>();
         serviceCollection.AddHostedService<MDBListEventHostedService>();
     }
 }

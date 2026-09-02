@@ -49,6 +49,11 @@
                         <span>Collection membership</span>
                     </label>
                     <label class="emby-checkbox-label">
+                        <input is="emby-checkbox" type="checkbox" id="chkScrobbling" />
+                        <span>Live scrobbling</span>
+                    </label>
+                    <div class="fieldDescription">Reports playback progress to MDBList in real time as you watch, independent of watched-status sync above.</div>
+                    <label class="emby-checkbox-label">
                         <input is="emby-checkbox" type="checkbox" id="chkIgnoreThumbs" />
                         <span>Ignore thumbs-up/down as ratings</span>
                     </label>
@@ -100,6 +105,7 @@
                 page.querySelector('#chkWatched').checked = !userConfig || userConfig.WatchedEnabled !== false;
                 page.querySelector('#chkRatings').checked = !userConfig || userConfig.RatingsEnabled !== false;
                 page.querySelector('#chkCollection').checked = !userConfig || userConfig.CollectionEnabled !== false;
+                page.querySelector('#chkScrobbling').checked = !userConfig || userConfig.ScrobblingEnabled !== false;
                 page.querySelector('#chkIgnoreThumbs').checked = !userConfig || userConfig.IgnoreThumbRatings !== false;
                 page.querySelector('#chkSyncAfterScan').checked = !userConfig || userConfig.SyncAfterLibraryScan !== false;
             }
@@ -258,6 +264,7 @@
                     userConfig.WatchedEnabled = page.querySelector('#chkWatched').checked;
                     userConfig.RatingsEnabled = page.querySelector('#chkRatings').checked;
                     userConfig.CollectionEnabled = page.querySelector('#chkCollection').checked;
+                    userConfig.ScrobblingEnabled = page.querySelector('#chkScrobbling').checked;
                     userConfig.IgnoreThumbRatings = page.querySelector('#chkIgnoreThumbs').checked;
                     userConfig.SyncAfterLibraryScan = page.querySelector('#chkSyncAfterScan').checked;
 
