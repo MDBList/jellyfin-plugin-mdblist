@@ -21,7 +21,7 @@ public static class ItemKeys
         ("imdb", ids => ids.Imdb),
         ("tvdb", ids => ids.Tvdb?.ToString(CultureInfo.InvariantCulture)),
         ("trakt", ids => ids.Trakt?.ToString(CultureInfo.InvariantCulture)),
-        ("mdblist", ids => ids.Mdblist?.ToString(CultureInfo.InvariantCulture)),
+        ("mdblist", ids => ids.Mdblist),
     ];
 
     /// <summary>

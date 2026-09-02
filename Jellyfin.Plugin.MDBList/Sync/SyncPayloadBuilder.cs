@@ -238,7 +238,7 @@ public class SyncPayloadBuilder
             ids.Tmdb?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
             ids.Tvdb?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
             ids.Trakt?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
-            ids.Mdblist?.ToString(CultureInfo.InvariantCulture) ?? string.Empty);
+            ids.Mdblist ?? string.Empty);
     }
 
     private static JsonNode SerializeIds(Api.Models.MediaIds ids)

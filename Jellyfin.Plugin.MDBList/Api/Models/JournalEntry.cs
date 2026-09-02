@@ -21,16 +21,28 @@ public class JournalEntry
     public string? ItemType { get; set; }
 
     /// <summary>
-    /// Gets or sets the status: "active" or "removed".
+    /// Gets or sets the status: "added" (or similar non-removed value) or
+    /// "removed". Only "removed" is checked explicitly; anything else is
+    /// treated as an add/update.
     /// </summary>
     [JsonPropertyName("status")]
     public string? Status { get; set; }
 
     /// <summary>
-    /// Gets or sets when this action happened, per the server's clock.
+    /// Gets or sets when this journal row was written, per the server's
+    /// clock -- NOT the same as <see cref="ValueAt"/> (the actual watched/
+    /// rated timestamp), which is what conflict resolution and the value
+    /// written locally must use instead.
     /// </summary>
     [JsonPropertyName("action_at")]
     public string? ActionAt { get; set; }
+
+    /// <summary>
+    /// Gets or sets the actual value's own timestamp (e.g. when the item
+    /// was watched/rated), always present regardless of category.
+    /// </summary>
+    [JsonPropertyName("value_at")]
+    public string? ValueAt { get; set; }
 
     /// <summary>
     /// Gets or sets the item's provider ids -- the movie's own ids, or the

@@ -6,6 +6,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.MDBList.Api.Models;
@@ -29,6 +30,19 @@ namespace Jellyfin.Plugin.MDBList.Api;
 public class MDBListApiClient
 {
     private const string BaseUrl = "https://api.mdblist.com";
+
+    // Response models expose their collections as get-only (Collection<T>/
+    // Dictionary<TKey,TValue>) to satisfy CA2227/CA1002 -- but
+    // System.Text.Json does NOT populate a get-only collection property by
+    // default (unlike XmlSerializer's population-via-getter behavior).
+    // Populate opts into that: confirmed empirically, since this is easy to
+    // silently get wrong and have every page deserialize as "empty" instead
+    // of throwing -- which a diff-based sync would read as "nothing to
+    // sync" rather than a real bug.
+    private static readonly JsonSerializerOptions DeserializeOptions = new()
+    {
+        PreferredObjectCreationHandling = JsonObjectCreationHandling.Populate,
+    };
 
     private readonly IHttpClientFactory _httpClientFactory;
 
@@ -204,7 +218,7 @@ public class MDBListApiClient
 
         try
         {
-            return JsonSerializer.Deserialize<T>(body);
+            return JsonSerializer.Deserialize<T>(body, DeserializeOptions);
         }
         catch (JsonException ex)
         {

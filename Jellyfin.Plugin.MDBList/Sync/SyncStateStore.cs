@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Common.Configuration;
@@ -28,7 +29,18 @@ public sealed class SyncStateStore : IDisposable
 {
     private const string FileName = "sync_state.json";
 
-    private static readonly JsonSerializerOptions SerializerOptions = new() { WriteIndented = true };
+    // Every collection/dictionary in SyncStateFile's object graph is exposed
+    // get-only to satisfy CA2227/CA1002 -- but System.Text.Json does NOT
+    // populate a get-only collection property by default (unlike
+    // XmlSerializer's population-via-getter behavior used elsewhere in this
+    // plugin for PluginConfiguration). Populate opts into that; without it,
+    // every reload from disk would silently come back as empty, which looks
+    // exactly like "nothing has ever been synced" instead of a real bug.
+    private static readonly JsonSerializerOptions SerializerOptions = new()
+    {
+        WriteIndented = true,
+        PreferredObjectCreationHandling = JsonObjectCreationHandling.Populate,
+    };
 
     private readonly string _filePath;
     private readonly SemaphoreSlim _lock = new(1, 1);
@@ -269,7 +281,7 @@ public sealed class SyncStateStore : IDisposable
         try
         {
             using var stream = File.OpenRead(_filePath);
-            var loaded = await JsonSerializer.DeserializeAsync<SyncStateFile>(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
+            var loaded = await JsonSerializer.DeserializeAsync<SyncStateFile>(stream, SerializerOptions, cancellationToken).ConfigureAwait(false);
             return loaded ?? new SyncStateFile();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)

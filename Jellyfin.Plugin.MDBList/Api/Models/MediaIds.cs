@@ -34,10 +34,11 @@ public class MediaIds
     public int? Trakt { get; set; }
 
     /// <summary>
-    /// Gets or sets the MDBList id.
+    /// Gets or sets the MDBList id -- an alphanumeric slug (e.g. "a2na"),
+    /// not numeric like the other providers.
     /// </summary>
     [JsonPropertyName("mdblist")]
-    public int? Mdblist { get; set; }
+    public string? Mdblist { get; set; }
 
     /// <summary>
     /// Gets or sets the Kitsu id (anime, movies only).
