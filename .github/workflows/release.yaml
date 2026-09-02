@@ -1,0 +1,72 @@
+name: '🚢 Release Plugin'
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Install JPRM
+        run: pip install --user jprm
+
+      - name: Determine version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Build plugin package
+        run: |
+          export PATH="$PATH:$HOME/.local/bin"
+          mkdir -p artifacts
+          jprm plugin build . -o artifacts -v "${{ steps.version.outputs.version }}" --dotnet-framework net9.0
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          files: artifacts/*.zip
+          generate_release_notes: true
+
+      - name: Fetch existing repository manifest
+        run: |
+          export PATH="$PATH:$HOME/.local/bin"
+          mkdir -p public
+          git fetch origin gh-pages 2>/dev/null || true
+          if ! git show origin/gh-pages:manifest.json > public/manifest.json 2>/dev/null; then
+            # A failed `git show` still leaves an empty file behind via the
+            # redirect above -- jprm repo init refuses to run if it finds
+            # one, mistaking it for an already-initialized repo.
+            rm -f public/manifest.json
+            jprm repo init public
+          fi
+
+      - name: Add this release to the manifest
+        run: |
+          export PATH="$PATH:$HOME/.local/bin"
+          ZIP_NAME=$(basename artifacts/*.zip)
+          jprm repo add public "artifacts/${ZIP_NAME}" \
+            -U "https://github.com/${GITHUB_REPOSITORY}/releases/download/${{ steps.version.outputs.tag }}/${ZIP_NAME}"
+
+      - name: Publish manifest to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public
+          publish_branch: gh-pages

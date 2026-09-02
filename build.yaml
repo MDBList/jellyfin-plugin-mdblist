@@ -1,7 +1,7 @@
 ---
 name: "MDBList"
 guid: "cbca79d7-ecde-4030-833c-3862f3c3a737"
-version: "0.1.0.0"
+version: "1.0.0.0"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 overview: "Two-way sync of watched status and ratings, plus collection sync, against MDBList"
@@ -15,4 +15,10 @@ owner: "linaspurinis"
 artifacts:
 - "Jellyfin.Plugin.MDBList.dll"
 changelog: >
-  0.1.0.0: initial plugin skeleton.
+  1.0.0.0: Initial release. Two-way sync of watched status and ratings,
+  push-only collection sync, live playback scrobbling to MDBList's
+  /scrobble endpoints, OAuth device-code authentication, incremental
+  cursor-based pulls with automatic full-reconciliation fallback, a
+  24h scheduled full sync plus a 15-minute activity-gated cheap poll,
+  and a config page for connecting your account and choosing what to
+  sync.
