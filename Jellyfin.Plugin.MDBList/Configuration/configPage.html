@@ -8,48 +8,190 @@
     <div id="MDBListConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-select,emby-checkbox">
         <div data-role="content">
             <div class="content-primary">
-                <form id="MDBListConfigForm">
-                    <div class="checkboxContainer checkboxContainer-withDescription">
-                        <label class="emby-checkbox-label">
-                            <input id="DevPlaceholderEnabled" name="DevPlaceholderEnabled" type="checkbox" is="emby-checkbox" />
-                            <span>Dev placeholder toggle</span>
-                        </label>
-                        <div class="fieldDescription">Phase 1 skeleton check -- replaced by real settings in later phases.</div>
-                    </div>
-                    <div>
-                        <button is="emby-button" type="submit" class="raised button-submit block emby-button">
-                            <span>Save</span>
-                        </button>
-                    </div>
-                </form>
+                <div class="selectContainer">
+                    <label class="selectLabel" for="selectUser">Jellyfin user to link</label>
+                    <select is="emby-select" id="selectUser" class="emby-select-withcolor emby-select"></select>
+                    <div class="fieldDescription">MDBList sync applies to this Jellyfin user's watched status and ratings.</div>
+                </div>
+
+                <p id="connectionStatus"></p>
+
+                <div>
+                    <button is="emby-button" id="btnConnect" type="button" class="raised block emby-button">
+                        <span>Connect to MDBList</span>
+                    </button>
+                    <button is="emby-button" id="btnDisconnect" type="button" class="raised block emby-button hide">
+                        <span>Disconnect</span>
+                    </button>
+                    <button is="emby-button" id="btnTest" type="button" class="raised block emby-button hide">
+                        <span>Test connection</span>
+                    </button>
+                </div>
+
+                <div id="deviceCodeBlock" class="hide">
+                    <p>Go to <a id="verificationLink" href="#" target="_blank" rel="noopener noreferrer"></a> and enter this code:</p>
+                    <h2 id="userCode"></h2>
+                    <p id="pollStatus"></p>
+                </div>
             </div>
         </div>
         <script type="text/javascript">
             var MDBListConfig = {
-                pluginUniqueId: 'cbca79d7-ecde-4030-833c-3862f3c3a737'
+                pluginUniqueId: 'cbca79d7-ecde-4030-833c-3862f3c3a737',
+                pollTimer: null,
+                users: []
             };
 
-            document.querySelector('#MDBListConfigPage')
-                .addEventListener('pageshow', function() {
-                    Dashboard.showLoadingMsg();
-                    ApiClient.getPluginConfiguration(MDBListConfig.pluginUniqueId).then(function (config) {
-                        document.querySelector('#DevPlaceholderEnabled').checked = config.DevPlaceholderEnabled;
-                        Dashboard.hideLoadingMsg();
-                    });
-                });
+            function mdblistUserConfig(config, userId) {
+                return (config.Users || []).filter(function (u) {
+                    return u.JellyfinUserId === userId;
+                })[0];
+            }
 
-            document.querySelector('#MDBListConfigForm')
-                .addEventListener('submit', function(e) {
-                Dashboard.showLoadingMsg();
+            function mdblistRenderStatus(page, connected) {
+                var statusEl = page.querySelector('#connectionStatus');
+                statusEl.textContent = connected ? 'Connected to MDBList.' : 'Not connected.';
+                page.querySelector('#btnConnect').classList.toggle('hide', connected);
+                page.querySelector('#btnDisconnect').classList.toggle('hide', !connected);
+                page.querySelector('#btnTest').classList.toggle('hide', !connected);
+            }
+
+            function mdblistRefresh(page) {
+                var userId = page.querySelector('#selectUser').value;
                 ApiClient.getPluginConfiguration(MDBListConfig.pluginUniqueId).then(function (config) {
-                    config.DevPlaceholderEnabled = document.querySelector('#DevPlaceholderEnabled').checked;
-                    ApiClient.updatePluginConfiguration(MDBListConfig.pluginUniqueId, config).then(function (result) {
-                        Dashboard.processPluginConfigurationUpdateResult(result);
-                    });
+                    var userConfig = mdblistUserConfig(config, userId);
+                    mdblistRenderStatus(page, !!(userConfig && userConfig.AccessToken));
                 });
+            }
 
-                e.preventDefault();
-                return false;
+            function mdblistStopPolling() {
+                if (MDBListConfig.pollTimer) {
+                    clearTimeout(MDBListConfig.pollTimer);
+                    MDBListConfig.pollTimer = null;
+                }
+            }
+
+            function mdblistPoll(page, userId, deviceCode, intervalSeconds, deadline) {
+                var request = {
+                    url: ApiClient.getUrl('MDBList/Users/' + userId + '/Poll'),
+                    type: 'POST',
+                    dataType: 'json',
+                    contentType: 'application/json',
+                    data: JSON.stringify({ DeviceCode: deviceCode }),
+                    headers: { accept: 'application/json' }
+                };
+
+                ApiClient.fetch(request).then(function (result) {
+                    if (result.Status === 'authorized') {
+                        page.querySelector('#pollStatus').textContent = 'Connected!';
+                        page.querySelector('#deviceCodeBlock').classList.add('hide');
+                        mdblistRefresh(page);
+                        return;
+                    }
+
+                    if (result.Status === 'expired' || result.Status === 'denied') {
+                        page.querySelector('#pollStatus').textContent = result.Message || 'Authorization failed.';
+                        return;
+                    }
+
+                    if (Date.now() > deadline) {
+                        page.querySelector('#pollStatus').textContent = 'Authorization expired. Please try again.';
+                        return;
+                    }
+
+                    var nextInterval = result.Status === 'slow_down' ? intervalSeconds + 5 : intervalSeconds;
+                    MDBListConfig.pollTimer = setTimeout(function () {
+                        mdblistPoll(page, userId, deviceCode, nextInterval, deadline);
+                    }, nextInterval * 1000);
+                }).catch(function () {
+                    // A single failed poll request isn't fatal -- retry on the same interval.
+                    MDBListConfig.pollTimer = setTimeout(function () {
+                        mdblistPoll(page, userId, deviceCode, intervalSeconds, deadline);
+                    }, intervalSeconds * 1000);
+                });
+            }
+
+            document.querySelector('#MDBListConfigPage').addEventListener('pageshow', function () {
+                var page = this;
+                Dashboard.showLoadingMsg();
+                ApiClient.getUsers().then(function (users) {
+                    MDBListConfig.users = users;
+                    var select = page.querySelector('#selectUser');
+                    select.innerHTML = users.map(function (u) {
+                        return '<option value="' + u.Id + '">' + u.Name + '</option>';
+                    }).join('');
+                    mdblistRefresh(page);
+                    Dashboard.hideLoadingMsg();
+                });
+            });
+
+            document.querySelector('#selectUser').addEventListener('change', function () {
+                mdblistStopPolling();
+                document.querySelector('#deviceCodeBlock').classList.add('hide');
+                mdblistRefresh(document.querySelector('#MDBListConfigPage'));
+            });
+
+            document.querySelector('#btnConnect').addEventListener('click', function () {
+                var page = document.querySelector('#MDBListConfigPage');
+                var userId = page.querySelector('#selectUser').value;
+                mdblistStopPolling();
+
+                Dashboard.showLoadingMsg();
+                ApiClient.fetch({
+                    url: ApiClient.getUrl('MDBList/Users/' + userId + '/DeviceCode'),
+                    type: 'POST',
+                    dataType: 'json',
+                    headers: { accept: 'application/json' }
+                }).then(function (result) {
+                    Dashboard.hideLoadingMsg();
+                    page.querySelector('#userCode').textContent = result.UserCode;
+                    var link = page.querySelector('#verificationLink');
+                    link.href = result.VerificationUriComplete;
+                    link.textContent = result.VerificationUri;
+                    page.querySelector('#pollStatus').textContent = 'Waiting for authorization...';
+                    page.querySelector('#deviceCodeBlock').classList.remove('hide');
+
+                    var deadline = Date.now() + (result.ExpiresIn * 1000);
+                    mdblistPoll(page, userId, result.DeviceCode, result.Interval, deadline);
+                }).catch(function () {
+                    Dashboard.hideLoadingMsg();
+                    Dashboard.alert({ message: 'Failed to start MDBList authorization.' });
+                });
+            });
+
+            document.querySelector('#btnDisconnect').addEventListener('click', function () {
+                var page = document.querySelector('#MDBListConfigPage');
+                var userId = page.querySelector('#selectUser').value;
+                Dashboard.showLoadingMsg();
+                ApiClient.fetch({
+                    url: ApiClient.getUrl('MDBList/Users/' + userId + '/Disconnect'),
+                    type: 'POST',
+                    headers: { accept: 'application/json' }
+                }).then(function () {
+                    Dashboard.hideLoadingMsg();
+                    mdblistRefresh(page);
+                }).catch(function () {
+                    Dashboard.hideLoadingMsg();
+                    Dashboard.alert({ message: 'Failed to disconnect.' });
+                });
+            });
+
+            document.querySelector('#btnTest').addEventListener('click', function () {
+                var page = document.querySelector('#MDBListConfigPage');
+                var userId = page.querySelector('#selectUser').value;
+                Dashboard.showLoadingMsg();
+                ApiClient.fetch({
+                    url: ApiClient.getUrl('MDBList/Users/' + userId + '/Test'),
+                    type: 'POST',
+                    dataType: 'json',
+                    headers: { accept: 'application/json' }
+                }).then(function (result) {
+                    Dashboard.hideLoadingMsg();
+                    Dashboard.alert({ message: 'Connected. Server time: ' + result.ServerTime });
+                }).catch(function () {
+                    Dashboard.hideLoadingMsg();
+                    Dashboard.alert({ message: 'Connection test failed.' });
+                });
             });
         </script>
     </div>
