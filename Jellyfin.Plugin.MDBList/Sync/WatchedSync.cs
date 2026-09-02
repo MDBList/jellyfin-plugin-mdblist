@@ -279,9 +279,19 @@ public class WatchedSync
                 continue;
             }
 
+            // value_at is the actual watched timestamp and is what
+            // conflict resolution must compare against -- but it's only
+            // ever set on add/active rows; a removal row has no "value" to
+            // speak of and only carries action_at (confirmed against
+            // api.mdblist's _remove_movies/_remove_shows/etc., which write
+            // the journal row with action_at but no value_at at all).
+            // Falling back to action_at there keeps last-write-wins working
+            // for removals instead of silently skipping the conflict check.
+            var remoteAt = entry.ValueAt ?? entry.ActionAt;
+
             if (entry.ItemType == "movie")
             {
-                var (appliedOk, _) = ApplyMovieEntry(user, snapshot, entry.Ids, entry.Status, entry.ValueAt);
+                var (appliedOk, _) = ApplyMovieEntry(user, snapshot, entry.Ids, entry.Status, remoteAt);
                 if (appliedOk)
                 {
                     applied++;
@@ -289,7 +299,7 @@ public class WatchedSync
             }
             else if (entry.ItemType == "episode")
             {
-                var (appliedOk, _) = ApplyEpisodeEntry(user, snapshot, entry.Ids, entry.Season, entry.Episode, entry.Status, entry.ValueAt);
+                var (appliedOk, _) = ApplyEpisodeEntry(user, snapshot, entry.Ids, entry.Season, entry.Episode, entry.Status, remoteAt);
                 if (appliedOk)
                 {
                     applied++;
