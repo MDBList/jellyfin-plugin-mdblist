@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>MDBList</title>
+</head>
+<body>
+    <div id="MDBListConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-select,emby-checkbox">
+        <div data-role="content">
+            <div class="content-primary">
+                <form id="MDBListConfigForm">
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label class="emby-checkbox-label">
+                            <input id="DevPlaceholderEnabled" name="DevPlaceholderEnabled" type="checkbox" is="emby-checkbox" />
+                            <span>Dev placeholder toggle</span>
+                        </label>
+                        <div class="fieldDescription">Phase 1 skeleton check -- replaced by real settings in later phases.</div>
+                    </div>
+                    <div>
+                        <button is="emby-button" type="submit" class="raised button-submit block emby-button">
+                            <span>Save</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <script type="text/javascript">
+            var MDBListConfig = {
+                pluginUniqueId: 'cbca79d7-ecde-4030-833c-3862f3c3a737'
+            };
+
+            document.querySelector('#MDBListConfigPage')
+                .addEventListener('pageshow', function() {
+                    Dashboard.showLoadingMsg();
+                    ApiClient.getPluginConfiguration(MDBListConfig.pluginUniqueId).then(function (config) {
+                        document.querySelector('#DevPlaceholderEnabled').checked = config.DevPlaceholderEnabled;
+                        Dashboard.hideLoadingMsg();
+                    });
+                });
+
+            document.querySelector('#MDBListConfigForm')
+                .addEventListener('submit', function(e) {
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(MDBListConfig.pluginUniqueId).then(function (config) {
+                    config.DevPlaceholderEnabled = document.querySelector('#DevPlaceholderEnabled').checked;
+                    ApiClient.updatePluginConfiguration(MDBListConfig.pluginUniqueId, config).then(function (result) {
+                        Dashboard.processPluginConfigurationUpdateResult(result);
+                    });
+                });
+
+                e.preventDefault();
+                return false;
+            });
+        </script>
+    </div>
+</body>
+</html>

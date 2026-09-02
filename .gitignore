@@ -1,0 +1,10 @@
+bin/
+obj/
+.vs/
+.idea/
+artifacts
+
+# Local Jellyfin dev server state (Phase 0) -- instance data, not source
+dev/config/
+dev/cache/
+dev/media/

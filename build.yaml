@@ -1,0 +1,18 @@
+---
+name: "MDBList"
+guid: "cbca79d7-ecde-4030-833c-3862f3c3a737"
+version: "0.1.0.0"
+targetAbi: "10.11.0.0"
+framework: "net9.0"
+overview: "Two-way sync of watched status and ratings, plus collection sync, against MDBList"
+description: >
+  Syncs watched status and ratings two-way between Jellyfin and MDBList,
+  and pushes library/collection membership to MDBList. Uses MDBList's
+  incremental sync API (last_activities + journal) for cheap, cursor-based
+  updates instead of full-library reconciliation on every run.
+category: "General"
+owner: "linaspurinis"
+artifacts:
+- "Jellyfin.Plugin.MDBList.dll"
+changelog: >
+  0.1.0.0: initial plugin skeleton.
