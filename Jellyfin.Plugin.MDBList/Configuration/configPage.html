@@ -33,6 +33,45 @@
                     <h2 id="userCode"></h2>
                     <p id="pollStatus"></p>
                 </div>
+
+                <div id="settingsBlock" class="hide">
+                    <h2>What to sync</h2>
+                    <label class="emby-checkbox-label">
+                        <input is="emby-checkbox" type="checkbox" id="chkWatched" />
+                        <span>Watched status</span>
+                    </label>
+                    <label class="emby-checkbox-label">
+                        <input is="emby-checkbox" type="checkbox" id="chkRatings" />
+                        <span>Ratings</span>
+                    </label>
+                    <label class="emby-checkbox-label">
+                        <input is="emby-checkbox" type="checkbox" id="chkCollection" />
+                        <span>Collection membership</span>
+                    </label>
+                    <label class="emby-checkbox-label">
+                        <input is="emby-checkbox" type="checkbox" id="chkIgnoreThumbs" />
+                        <span>Ignore thumbs-up/down as ratings</span>
+                    </label>
+                    <div class="fieldDescription">The web UI's thumbs button always writes a 10 or 1 rating regardless of intent -- leave this checked unless you want that pushed to MDBList as a real rating.</div>
+                    <label class="emby-checkbox-label">
+                        <input is="emby-checkbox" type="checkbox" id="chkSyncAfterScan" />
+                        <span>Sync after library scan</span>
+                    </label>
+
+                    <div>
+                        <button is="emby-button" id="btnSaveSettings" type="button" class="raised block emby-button">
+                            <span>Save</span>
+                        </button>
+                    </div>
+
+                    <h2>Status</h2>
+                    <p id="lastRunSummary"></p>
+                    <div>
+                        <button is="emby-button" id="btnSyncNow" type="button" class="raised block emby-button">
+                            <span>Sync now</span>
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
         <script type="text/javascript">
@@ -54,13 +93,42 @@
                 page.querySelector('#btnConnect').classList.toggle('hide', connected);
                 page.querySelector('#btnDisconnect').classList.toggle('hide', !connected);
                 page.querySelector('#btnTest').classList.toggle('hide', !connected);
+                page.querySelector('#settingsBlock').classList.toggle('hide', !connected);
+            }
+
+            function mdblistRenderSettings(page, userConfig) {
+                page.querySelector('#chkWatched').checked = !userConfig || userConfig.WatchedEnabled !== false;
+                page.querySelector('#chkRatings').checked = !userConfig || userConfig.RatingsEnabled !== false;
+                page.querySelector('#chkCollection').checked = !userConfig || userConfig.CollectionEnabled !== false;
+                page.querySelector('#chkIgnoreThumbs').checked = !userConfig || userConfig.IgnoreThumbRatings !== false;
+                page.querySelector('#chkSyncAfterScan').checked = !userConfig || userConfig.SyncAfterLibraryScan !== false;
+            }
+
+            function mdblistRefreshStatus(page, userId) {
+                ApiClient.fetch({
+                    url: ApiClient.getUrl('MDBList/Users/' + userId + '/Status'),
+                    type: 'GET',
+                    dataType: 'json',
+                    headers: { accept: 'application/json' }
+                }).then(function (result) {
+                    page.querySelector('#lastRunSummary').textContent = result.LastRunSummary
+                        ? 'Last run: ' + result.LastRunSummary
+                        : 'No sync has run yet.';
+                }).catch(function () {
+                    page.querySelector('#lastRunSummary').textContent = '';
+                });
             }
 
             function mdblistRefresh(page) {
                 var userId = page.querySelector('#selectUser').value;
                 ApiClient.getPluginConfiguration(MDBListConfig.pluginUniqueId).then(function (config) {
                     var userConfig = mdblistUserConfig(config, userId);
-                    mdblistRenderStatus(page, !!(userConfig && userConfig.AccessToken));
+                    var connected = !!(userConfig && userConfig.AccessToken);
+                    mdblistRenderStatus(page, connected);
+                    mdblistRenderSettings(page, userConfig);
+                    if (connected) {
+                        mdblistRefreshStatus(page, userId);
+                    }
                 });
             }
 
@@ -173,6 +241,53 @@
                 }).catch(function () {
                     Dashboard.hideLoadingMsg();
                     Dashboard.alert({ message: 'Failed to disconnect.' });
+                });
+            });
+
+            document.querySelector('#btnSaveSettings').addEventListener('click', function () {
+                var page = document.querySelector('#MDBListConfigPage');
+                var userId = page.querySelector('#selectUser').value;
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(MDBListConfig.pluginUniqueId).then(function (config) {
+                    var userConfig = mdblistUserConfig(config, userId);
+                    if (!userConfig) {
+                        Dashboard.hideLoadingMsg();
+                        return;
+                    }
+
+                    userConfig.WatchedEnabled = page.querySelector('#chkWatched').checked;
+                    userConfig.RatingsEnabled = page.querySelector('#chkRatings').checked;
+                    userConfig.CollectionEnabled = page.querySelector('#chkCollection').checked;
+                    userConfig.IgnoreThumbRatings = page.querySelector('#chkIgnoreThumbs').checked;
+                    userConfig.SyncAfterLibraryScan = page.querySelector('#chkSyncAfterScan').checked;
+
+                    ApiClient.updatePluginConfiguration(MDBListConfig.pluginUniqueId, config).then(function () {
+                        Dashboard.hideLoadingMsg();
+                        Dashboard.alert({ message: 'Settings saved.' });
+                    }).catch(function () {
+                        Dashboard.hideLoadingMsg();
+                        Dashboard.alert({ message: 'Failed to save settings.' });
+                    });
+                });
+            });
+
+            document.querySelector('#btnSyncNow').addEventListener('click', function () {
+                var page = document.querySelector('#MDBListConfigPage');
+                var userId = page.querySelector('#selectUser').value;
+                Dashboard.showLoadingMsg();
+                ApiClient.fetch({
+                    url: ApiClient.getUrl('MDBList/Users/' + userId + '/Sync'),
+                    type: 'POST',
+                    dataType: 'json',
+                    headers: { accept: 'application/json' }
+                }).then(function (result) {
+                    Dashboard.hideLoadingMsg();
+                    page.querySelector('#lastRunSummary').textContent = result.LastRunSummary
+                        ? 'Last run: ' + result.LastRunSummary
+                        : 'No sync has run yet.';
+                }).catch(function () {
+                    Dashboard.hideLoadingMsg();
+                    Dashboard.alert({ message: 'Sync failed to start.' });
                 });
             });
 

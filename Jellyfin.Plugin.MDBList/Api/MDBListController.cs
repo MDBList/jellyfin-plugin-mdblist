@@ -1,8 +1,10 @@
 using System;
+using System.Linq;
 using System.Net.Mime;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.MDBList.Api.Models;
+using Jellyfin.Plugin.MDBList.Sync;
 using MediaBrowser.Common.Api;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -10,9 +12,9 @@ using Microsoft.AspNetCore.Mvc;
 namespace Jellyfin.Plugin.MDBList.Api;
 
 /// <summary>
-/// Endpoints backing the plugin's config page: device-code OAuth flow and a
-/// connectivity test. All actions require an elevated (admin) caller, same
-/// as the dashboard itself.
+/// Endpoints backing the plugin's config page: device-code OAuth flow, a
+/// connectivity test, manual "Sync now", and the last-run status. All
+/// actions require an elevated (admin) caller, same as the dashboard itself.
 /// </summary>
 [ApiController]
 [Authorize(Policy = Policies.RequiresElevation)]
@@ -21,14 +23,20 @@ namespace Jellyfin.Plugin.MDBList.Api;
 public class MDBListController : ControllerBase
 {
     private readonly OAuthService _oauthService;
+    private readonly SyncOrchestrator _orchestrator;
+    private readonly SyncStateStore _stateStore;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="MDBListController"/> class.
     /// </summary>
     /// <param name="oauthService">Instance of the <see cref="OAuthService"/>.</param>
-    public MDBListController(OAuthService oauthService)
+    /// <param name="orchestrator">Instance of the <see cref="SyncOrchestrator"/>.</param>
+    /// <param name="stateStore">Instance of the <see cref="SyncStateStore"/>.</param>
+    public MDBListController(OAuthService oauthService, SyncOrchestrator orchestrator, SyncStateStore stateStore)
     {
         _oauthService = oauthService;
+        _orchestrator = orchestrator;
+        _stateStore = stateStore;
     }
 
     /// <summary>
@@ -96,5 +104,44 @@ public class MDBListController : ControllerBase
         {
             return BadRequest(ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Triggers a full sync run immediately -- the config page's "Sync now"
+    /// button. Trivial here: unlike Kodi's addon-process-vs-service split,
+    /// this runs in the same process as everything else, so there's no
+    /// cross-process signaling to do -- just call the orchestrator directly.
+    /// </summary>
+    /// <param name="userId">The linked Jellyfin user.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The resulting status, including the run's summary.</returns>
+    [HttpPost("Users/{userId}/Sync")]
+    public async Task<ActionResult<SyncStatusResult>> Sync(Guid userId, CancellationToken cancellationToken)
+    {
+        await _orchestrator.RunAsync(cancellationToken).ConfigureAwait(false);
+        return Ok(await BuildStatusAsync(userId, cancellationToken).ConfigureAwait(false));
+    }
+
+    /// <summary>
+    /// Gets the linked/connected state and the most recent sync run's summary.
+    /// </summary>
+    /// <param name="userId">The Jellyfin user.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The current status.</returns>
+    [HttpGet("Users/{userId}/Status")]
+    public async Task<ActionResult<SyncStatusResult>> Status(Guid userId, CancellationToken cancellationToken)
+    {
+        return Ok(await BuildStatusAsync(userId, cancellationToken).ConfigureAwait(false));
+    }
+
+    private async Task<SyncStatusResult> BuildStatusAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var linkedUserConfig = Plugin.Instance?.Configuration.Users.FirstOrDefault(u => u.JellyfinUserId == userId);
+        var summary = await _stateStore.GetLastRunSummaryAsync(userId, cancellationToken).ConfigureAwait(false);
+        return new SyncStatusResult
+        {
+            Connected = !string.IsNullOrEmpty(linkedUserConfig?.AccessToken),
+            LastRunSummary = summary,
+        };
     }
 }
