@@ -348,30 +348,51 @@ public class WatchedSync
     {
         var localTs = record.LastPlayedDate;
         var remoteTs = ParseTimestamp(remoteAt);
+        var removed = status == "removed";
 
-        if (status == "removed")
-        {
-            if (record.PlayCount <= 0)
-            {
-                return false;
-            }
-
-            if (localTs.HasValue && remoteTs.HasValue && localTs > remoteTs)
-            {
-                return false;
-            }
-
-            SetWatched(user, record.ItemId, played: false, playCount: 0, lastPlayedDate: null);
-            return true;
-        }
-
-        if (record.PlayCount > 0 && localTs.HasValue && remoteTs.HasValue && localTs > remoteTs)
+        if (!ShouldApplyRemoteWatched(removed, record.PlayCount, localTs, remoteTs))
         {
             return false;
         }
 
-        SetWatched(user, record.ItemId, played: true, playCount: Math.Max(record.PlayCount, 1), lastPlayedDate: remoteTs ?? record.LastPlayedDate);
+        if (removed)
+        {
+            SetWatched(user, record.ItemId, played: false, playCount: 0, lastPlayedDate: null);
+        }
+        else
+        {
+            SetWatched(user, record.ItemId, played: true, playCount: Math.Max(record.PlayCount, 1), lastPlayedDate: remoteTs ?? record.LastPlayedDate);
+        }
+
         return true;
+    }
+
+    /// <summary>
+    /// The conflict-resolution decision at the heart of <see cref="ApplyWatched"/>,
+    /// pulled out as a pure function so the matrix (local newer / remote
+    /// newer / exact tie / missing timestamps, crossed with add vs remove)
+    /// is unit-testable without a live <c>IUserDataManager</c>. An exact tie
+    /// resolves the same way in both branches -- remote wins -- rather than
+    /// local winning on removal but losing on activation.
+    /// </summary>
+    /// <param name="removed">Whether the remote row is a removal.</param>
+    /// <param name="localPlayCount">The local item's current play count.</param>
+    /// <param name="localTs">The local item's <c>LastPlayedDate</c>, if any.</param>
+    /// <param name="remoteTs">The remote row's effective timestamp, if any.</param>
+    /// <returns>True if the remote state should be applied locally.</returns>
+    internal static bool ShouldApplyRemoteWatched(bool removed, int localPlayCount, DateTime? localTs, DateTime? remoteTs)
+    {
+        if (removed)
+        {
+            if (localPlayCount <= 0)
+            {
+                return false;
+            }
+
+            return !(localTs.HasValue && remoteTs.HasValue && localTs > remoteTs);
+        }
+
+        return !(localPlayCount > 0 && localTs.HasValue && remoteTs.HasValue && localTs > remoteTs);
     }
 
     private void SetWatched(User user, Guid itemId, bool played, int playCount, DateTime? lastPlayedDate)

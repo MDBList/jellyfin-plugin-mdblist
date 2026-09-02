@@ -30,4 +30,8 @@
     <EmbeddedResource Include="Configuration\configPage.html" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Jellyfin.Plugin.MDBList.Tests" />
+  </ItemGroup>
+
 </Project>
