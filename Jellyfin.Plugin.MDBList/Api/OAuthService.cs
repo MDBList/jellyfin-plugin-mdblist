@@ -22,7 +22,6 @@ public class OAuthService : IDisposable
     private const string DeviceAuthUrl = "https://api.mdblist.com/oauth/device-authorization/";
     private const string TokenUrl = "https://api.mdblist.com/oauth/token/";
     private const string RevokeUrl = "https://api.mdblist.com/oauth/revoke_token/";
-    private const string LastActivitiesUrl = "https://api.mdblist.com/sync/last_activities";
     private const string DeviceGrantType = "urn:ietf:params:oauth:grant-type:device_code";
 
     // Serializes every read-modify-write of PluginConfiguration.Users -- the
@@ -31,16 +30,19 @@ public class OAuthService : IDisposable
     private readonly SemaphoreSlim _configLock = new(1, 1);
 
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly MDBListApiClient _apiClient;
     private readonly ILogger<OAuthService> _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="OAuthService"/> class.
     /// </summary>
     /// <param name="httpClientFactory">Instance of the <see cref="IHttpClientFactory"/> interface.</param>
+    /// <param name="apiClient">Instance of the <see cref="MDBListApiClient"/>.</param>
     /// <param name="logger">Instance of the <see cref="ILogger{OAuthService}"/> interface.</param>
-    public OAuthService(IHttpClientFactory httpClientFactory, ILogger<OAuthService> logger)
+    public OAuthService(IHttpClientFactory httpClientFactory, MDBListApiClient apiClient, ILogger<OAuthService> logger)
     {
         _httpClientFactory = httpClientFactory;
+        _apiClient = apiClient;
         _logger = logger;
     }
 
@@ -234,37 +236,8 @@ public class OAuthService : IDisposable
             throw new MDBListApiException("Not connected to MDBList");
         }
 
-        var client = _httpClientFactory.CreateClient(NamedClient.Default);
-        using var request = new HttpRequestMessage(HttpMethod.Get, LastActivitiesUrl);
-        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
-
-        using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
-        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            throw new MDBListApiException($"/sync/last_activities failed: {(int)response.StatusCode} {body}");
-        }
-
-        JsonDocument document;
-        try
-        {
-            document = JsonDocument.Parse(body);
-        }
-        catch (JsonException ex)
-        {
-            throw new MDBListApiException("Malformed /sync/last_activities response", ex);
-        }
-
-        using (document)
-        {
-            if (!document.RootElement.TryGetProperty("server_time", out var serverTimeElement))
-            {
-                throw new MDBListApiException("/sync/last_activities response missing server_time");
-            }
-
-            return serverTimeElement.GetString() ?? string.Empty;
-        }
+        var activities = await _apiClient.FetchLastActivitiesAsync(accessToken, cancellationToken).ConfigureAwait(false);
+        return activities.ServerTime ?? string.Empty;
     }
 
     private async Task<bool> TryRefreshAsync(Guid jellyfinUserId, string refreshToken, CancellationToken cancellationToken)
