@@ -222,6 +222,40 @@ public sealed class SyncStateStore : IDisposable
             cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Gets the most recent sync run's summary text for the config page.
+    /// </summary>
+    /// <param name="userId">The Jellyfin user.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The summary, or null if no run has completed yet.</returns>
+    public async Task<string?> GetLastRunSummaryAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var file = await EnsureLoadedAsync(cancellationToken).ConfigureAwait(false);
+            return TryGetUserState(file, userId, out var userState) ? userState.LastRunSummary : null;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Records the most recent sync run's summary text.
+    /// </summary>
+    /// <param name="userId">The Jellyfin user.</param>
+    /// <param name="summary">The summary text.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    public async Task SetLastRunSummaryAsync(Guid userId, string summary, CancellationToken cancellationToken)
+    {
+        await MutateAsync(
+            file => GetOrCreateUserState(file, userId).LastRunSummary = summary,
+            cancellationToken).ConfigureAwait(false);
+    }
+
     private static CategoryState GetCategoryState(UserSyncState userState, SyncCategory category)
     {
         return category switch

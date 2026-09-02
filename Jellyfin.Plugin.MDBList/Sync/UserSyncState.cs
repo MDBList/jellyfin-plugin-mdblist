@@ -27,4 +27,11 @@ public class UserSyncState
     /// checked against -- gates the cheap incremental-pull check.
     /// </summary>
     public Dictionary<string, string> LastActivitiesSeen { get; } = new();
+
+    /// <summary>
+    /// Gets or sets a human-readable summary of the most recent sync run
+    /// (full or activity-triggered), shown on the config page. Null until
+    /// the first run completes.
+    /// </summary>
+    public string? LastRunSummary { get; set; }
 }

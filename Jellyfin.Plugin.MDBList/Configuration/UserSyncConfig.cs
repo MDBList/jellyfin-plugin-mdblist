@@ -40,4 +40,32 @@ public class UserSyncConfig
     /// Defaults to on.
     /// </summary>
     public bool IgnoreThumbRatings { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether watched status syncs at all
+    /// (live push, full run, and the activity-gated pull).
+    /// </summary>
+    public bool WatchedEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether ratings sync at all.
+    /// </summary>
+    public bool RatingsEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether collection membership pushes
+    /// at all.
+    /// </summary>
+    public bool CollectionEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether a full sync run should follow
+    /// a completed library scan -- port of Kodi's <c>sync.on_library_scan</c>
+    /// setting. <see cref="Events.LibraryChangeDebouncer"/> already reacts to
+    /// every item add/update/remove regardless of what triggered them (a
+    /// scheduled scan, real-time monitoring, a manual "Scan Library"), so
+    /// this toggle gates that debouncer rather than adding a second,
+    /// redundant trigger off <c>ITaskManager.TaskCompleted</c>.
+    /// </summary>
+    public bool SyncAfterLibraryScan { get; set; } = true;
 }

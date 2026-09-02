@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.MDBList.Api;
 using Jellyfin.Plugin.MDBList.Api.Models;
+using Jellyfin.Plugin.MDBList.Configuration;
 using Jellyfin.Plugin.MDBList.Library;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging;
@@ -113,11 +115,13 @@ public sealed class SyncOrchestrator : IDisposable
             return false;
         }
 
-        var user = ResolveLinkedUser();
-        if (user is null)
+        var linked = ResolveLinkedUser();
+        if (linked is null)
         {
             return false;
         }
+
+        var (user, config) = linked.Value;
 
         var accessToken = await _oauthService.EnsureValidTokenAsync(user.Id, cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrEmpty(accessToken))
@@ -134,33 +138,57 @@ public sealed class SyncOrchestrator : IDisposable
             var snapshot = LibrarySnapshot.Build(_libraryManager, _userDataManager, user);
             var activities = await _apiClient.FetchLastActivitiesAsync(accessToken, cancellationToken).ConfigureAwait(false);
 
-            var watchedPush = await _watchedSync.PushAsync(user.Id, accessToken, snapshot, cancellationToken).ConfigureAwait(false);
-            var watchedPull = await _watchedSync.PullAsync(user.Id, accessToken, user, snapshot, activities.ServerTime, cancellationToken)
-                .ConfigureAwait(false);
-            var ratingsPush = await _ratingsSync.PushAsync(user.Id, accessToken, snapshot, cancellationToken).ConfigureAwait(false);
-            var ratingsPull = await _ratingsSync.PullAsync(user.Id, accessToken, user, snapshot, activities.ServerTime, cancellationToken)
-                .ConfigureAwait(false);
-            var collectionPush = await _collectionSync.PushAsync(user.Id, accessToken, snapshot, cancellationToken).ConfigureAwait(false);
+            var watchedSummary = "watched skipped";
+            if (config.WatchedEnabled)
+            {
+                var watchedPush = await _watchedSync.PushAsync(user.Id, accessToken, snapshot, cancellationToken).ConfigureAwait(false);
+                var watchedPull = await _watchedSync.PullAsync(user.Id, accessToken, user, snapshot, activities.ServerTime, cancellationToken)
+                    .ConfigureAwait(false);
+                watchedSummary = string.Format(
+                    CultureInfo.InvariantCulture,
+                    "watched push +{0}/-{1} pull {2} ({3})",
+                    watchedPush.PushedAdd,
+                    watchedPush.PushedRemove,
+                    watchedPull.PulledApplied,
+                    watchedPull.Mode);
+            }
 
-            _logger.LogInformation(
-                "MDBList Sync: run complete - watched push +{WAdd}/-{WRemove} pull {WApplied} ({WMode}), "
-                    + "ratings push +{RAdd}/-{RRemove} pull {RApplied} ({RMode}), collection push +{CAdd}/-{CRemove}",
-                watchedPush.PushedAdd,
-                watchedPush.PushedRemove,
-                watchedPull.PulledApplied,
-                watchedPull.Mode,
-                ratingsPush.PushedAdd,
-                ratingsPush.PushedRemove,
-                ratingsPull.PulledApplied,
-                ratingsPull.Mode,
-                collectionPush.PushedAdd,
-                collectionPush.PushedRemove);
+            var ratingsSummary = "ratings skipped";
+            if (config.RatingsEnabled)
+            {
+                var ratingsPush = await _ratingsSync.PushAsync(user.Id, accessToken, snapshot, cancellationToken).ConfigureAwait(false);
+                var ratingsPull = await _ratingsSync.PullAsync(user.Id, accessToken, user, snapshot, activities.ServerTime, cancellationToken)
+                    .ConfigureAwait(false);
+                ratingsSummary = string.Format(
+                    CultureInfo.InvariantCulture,
+                    "ratings push +{0}/-{1} pull {2} ({3})",
+                    ratingsPush.PushedAdd,
+                    ratingsPush.PushedRemove,
+                    ratingsPull.PulledApplied,
+                    ratingsPull.Mode);
+            }
+
+            var collectionSummary = "collection skipped";
+            if (config.CollectionEnabled)
+            {
+                var collectionPush = await _collectionSync.PushAsync(user.Id, accessToken, snapshot, cancellationToken).ConfigureAwait(false);
+                collectionSummary = string.Format(
+                    CultureInfo.InvariantCulture,
+                    "collection push +{0}/-{1}",
+                    collectionPush.PushedAdd,
+                    collectionPush.PushedRemove);
+            }
+
+            var summary = $"{watchedSummary}, {ratingsSummary}, {collectionSummary}";
+            _logger.LogInformation("MDBList Sync: run complete - {Summary}", summary);
+            await _stateStore.SetLastRunSummaryAsync(user.Id, summary, cancellationToken).ConfigureAwait(false);
 
             return true;
         }
         catch (MDBListApiException ex)
         {
             _logger.LogError(ex, "MDBList Sync: run failed");
+            await _stateStore.SetLastRunSummaryAsync(user.Id, $"run failed: {ex.Message}", cancellationToken).ConfigureAwait(false);
             return false;
         }
     }
@@ -181,11 +209,13 @@ public sealed class SyncOrchestrator : IDisposable
             return false;
         }
 
-        var user = ResolveLinkedUser();
-        if (user is null)
+        var linked = ResolveLinkedUser();
+        if (linked is null)
         {
             return false;
         }
+
+        var (user, config) = linked.Value;
 
         var accessToken = await _oauthService.EnsureValidTokenAsync(user.Id, cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrEmpty(accessToken))
@@ -212,8 +242,8 @@ public sealed class SyncOrchestrator : IDisposable
         // clear per-item state and separately bump journal_at. Without
         // checking it too, an unwatch/unrate never trips this gate.
         var journalAdvanced = AnyBucketAdvanced(seen, current, "journal_at");
-        var watchedChanged = journalAdvanced || AnyBucketAdvanced(seen, current, WatchedActivityKeys);
-        var ratingsChanged = journalAdvanced || AnyBucketAdvanced(seen, current, RatingActivityKeys);
+        var watchedChanged = config.WatchedEnabled && (journalAdvanced || AnyBucketAdvanced(seen, current, WatchedActivityKeys));
+        var ratingsChanged = config.RatingsEnabled && (journalAdvanced || AnyBucketAdvanced(seen, current, RatingActivityKeys));
 
         if (!watchedChanged && !ratingsChanged)
         {
@@ -227,6 +257,7 @@ public sealed class SyncOrchestrator : IDisposable
         }
 
         var snapshot = LibrarySnapshot.Build(_libraryManager, _userDataManager, user);
+        var summaries = new List<string>();
 
         try
         {
@@ -234,20 +265,14 @@ public sealed class SyncOrchestrator : IDisposable
             {
                 var watchedPull = await _watchedSync.PullAsync(user.Id, accessToken, user, snapshot, activities.ServerTime, cancellationToken)
                     .ConfigureAwait(false);
-                _logger.LogInformation(
-                    "MDBList Sync: activity-triggered watched pull applied {Applied} ({Mode})",
-                    watchedPull.PulledApplied,
-                    watchedPull.Mode);
+                summaries.Add(string.Format(CultureInfo.InvariantCulture, "watched pull {0} ({1})", watchedPull.PulledApplied, watchedPull.Mode));
             }
 
             if (ratingsChanged)
             {
                 var ratingsPull = await _ratingsSync.PullAsync(user.Id, accessToken, user, snapshot, activities.ServerTime, cancellationToken)
                     .ConfigureAwait(false);
-                _logger.LogInformation(
-                    "MDBList Sync: activity-triggered ratings pull applied {Applied} ({Mode})",
-                    ratingsPull.PulledApplied,
-                    ratingsPull.Mode);
+                summaries.Add(string.Format(CultureInfo.InvariantCulture, "ratings pull {0} ({1})", ratingsPull.PulledApplied, ratingsPull.Mode));
             }
         }
         catch (MDBListApiException ex)
@@ -255,6 +280,10 @@ public sealed class SyncOrchestrator : IDisposable
             _logger.LogError(ex, "MDBList Sync: activity-triggered pull failed");
             return false;
         }
+
+        var summary = "activity check: " + string.Join(", ", summaries);
+        _logger.LogInformation("MDBList Sync: {Summary}", summary);
+        await _stateStore.SetLastRunSummaryAsync(user.Id, summary, cancellationToken).ConfigureAwait(false);
 
         // Only reached on success, so a failed pull above leaves the
         // watermark where it was.
@@ -268,7 +297,7 @@ public sealed class SyncOrchestrator : IDisposable
         _gate.Dispose();
     }
 
-    private User? ResolveLinkedUser()
+    private (User User, UserSyncConfig Config)? ResolveLinkedUser()
     {
         var linkedUserConfig = Plugin.Instance?.Configuration.Users.FirstOrDefault();
         if (linkedUserConfig is null)
@@ -276,7 +305,8 @@ public sealed class SyncOrchestrator : IDisposable
             return null;
         }
 
-        return _userManager.GetUserById(linkedUserConfig.JellyfinUserId);
+        var user = _userManager.GetUserById(linkedUserConfig.JellyfinUserId);
+        return user is null ? null : (user, linkedUserConfig);
     }
 
     private static bool AnyBucketAdvanced(Dictionary<string, string> seen, Dictionary<string, string> current, params string[] keys)

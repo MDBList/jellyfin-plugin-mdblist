@@ -93,8 +93,8 @@ public class LiveSyncService
             return;
         }
 
-        var pushWatched = WatchedTriggerReasons.Contains(e.SaveReason);
-        var pushRating = RatingTriggerReasons.Contains(e.SaveReason);
+        var pushWatched = linkedUserConfig.WatchedEnabled && WatchedTriggerReasons.Contains(e.SaveReason);
+        var pushRating = linkedUserConfig.RatingsEnabled && RatingTriggerReasons.Contains(e.SaveReason);
 
         // The stock web UI's thumbs-up/down button always writes exactly
         // 10 or 1 via UpdateUserRating, regardless of what the user

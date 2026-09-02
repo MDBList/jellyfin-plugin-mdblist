@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.MDBList.Sync;
@@ -47,6 +48,12 @@ public sealed class LibraryChangeDebouncer : IDisposable
     public void NotifyChange(BaseItem item)
     {
         if (item is not (Movie or Episode))
+        {
+            return;
+        }
+
+        var linkedUserConfig = Plugin.Instance?.Configuration.Users.FirstOrDefault();
+        if (linkedUserConfig is null || !linkedUserConfig.SyncAfterLibraryScan)
         {
             return;
         }
