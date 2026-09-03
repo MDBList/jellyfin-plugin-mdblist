@@ -148,25 +148,31 @@ public sealed class PlaybackScrobbleService
 
     private async Task SendAsync(PlaybackProgressEventArgs e, string endpoint, bool playedToCompletion)
     {
+        var userIds = ResolveScrobblingLinkedUserIds(e.Users);
+        if (userIds.Count == 0)
+        {
+            return;
+        }
+
+        var request = BuildScrobbleRequest(e.Item, e.PlaybackPositionTicks, playedToCompletion);
+        if (request is null)
+        {
+            return;
+        }
+
+        // A session usually has exactly one user, but Jellyfin models it as
+        // a list -- push once per linked user actually on this session, not
+        // just the first one found overall.
+        foreach (var userId in userIds)
+        {
+            await SendForUserAsync(userId, endpoint, request).ConfigureAwait(false);
+        }
+    }
+
+    private async Task SendForUserAsync(Guid userId, string endpoint, ScrobbleRequest request)
+    {
         try
         {
-            if (!TryResolveLinkedUserId(e.Users, out var userId))
-            {
-                return;
-            }
-
-            var linkedUserConfig = Plugin.Instance?.Configuration.Users.FirstOrDefault(u => u.JellyfinUserId == userId);
-            if (linkedUserConfig is null || !linkedUserConfig.ScrobblingEnabled)
-            {
-                return;
-            }
-
-            var request = BuildScrobbleRequest(e.Item, e.PlaybackPositionTicks, playedToCompletion);
-            if (request is null)
-            {
-                return;
-            }
-
             var accessToken = await _oauthService.EnsureValidTokenAsync(userId, CancellationToken.None).ConfigureAwait(false);
             if (string.IsNullOrEmpty(accessToken))
             {
@@ -177,21 +183,29 @@ public sealed class PlaybackScrobbleService
         }
         catch (MDBListApiException ex)
         {
-            _logger.LogDebug(ex, "MDBList scrobble push to {Endpoint} failed", endpoint);
+            _logger.LogDebug(ex, "MDBList scrobble push to {Endpoint} failed for user {UserId}", endpoint, userId);
         }
     }
 
-    private static bool TryResolveLinkedUserId(IReadOnlyList<User> sessionUsers, out Guid userId)
+    private static List<Guid> ResolveScrobblingLinkedUserIds(IReadOnlyList<User> sessionUsers)
     {
-        var linkedUserConfig = Plugin.Instance?.Configuration.Users.FirstOrDefault();
-        if (linkedUserConfig is null || !sessionUsers.Any(u => u.Id == linkedUserConfig.JellyfinUserId))
+        var linkedUsers = Plugin.Instance?.Configuration.Users;
+        if (linkedUsers is null || linkedUsers.Count == 0)
         {
-            userId = Guid.Empty;
-            return false;
+            return [];
         }
 
-        userId = linkedUserConfig.JellyfinUserId;
-        return true;
+        var result = new List<Guid>();
+        foreach (var sessionUser in sessionUsers)
+        {
+            var config = linkedUsers.FirstOrDefault(u => u.JellyfinUserId == sessionUser.Id);
+            if (config is not null && config.ScrobblingEnabled)
+            {
+                result.Add(sessionUser.Id);
+            }
+        }
+
+        return result;
     }
 
     private static ScrobbleRequest? BuildScrobbleRequest(BaseItem? item, long? positionTicks, bool playedToCompletion)

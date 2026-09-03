@@ -54,7 +54,7 @@ public class MDBListActivityCheckTask : IScheduledTask
     /// <inheritdoc />
     public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
     {
-        await _orchestrator.CheckActivityAsync(cancellationToken).ConfigureAwait(false);
+        await _orchestrator.CheckAllActivityAsync(cancellationToken).ConfigureAwait(false);
         progress.Report(100);
     }
 }

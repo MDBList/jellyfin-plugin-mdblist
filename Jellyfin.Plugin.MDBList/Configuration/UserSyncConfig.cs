@@ -3,9 +3,10 @@ using System;
 namespace Jellyfin.Plugin.MDBList.Configuration;
 
 /// <summary>
-/// One Jellyfin user's link to an MDBList account. V1 supports exactly one
-/// entry, but every sync method takes the linked user id from day one so a
-/// later multi-user version is additive rather than a state migration.
+/// One Jellyfin user's link to an MDBList account. <see cref="PluginConfiguration.Users"/>
+/// holds one of these per linked user; every sync/live-push/scrobble path
+/// is keyed by <see cref="JellyfinUserId"/>, so multiple users can each link
+/// their own MDBList account independently.
 /// </summary>
 public class UserSyncConfig
 {

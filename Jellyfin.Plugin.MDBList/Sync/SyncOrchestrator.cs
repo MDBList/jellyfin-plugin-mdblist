@@ -97,16 +97,18 @@ public sealed class SyncOrchestrator : IDisposable
     }
 
     /// <summary>
-    /// Full run: rebuilds the library snapshot unconditionally and does
-    /// push-then-pull for every enabled category. The expensive path --
-    /// covers pushing anything the live listener missed (e.g. while
-    /// Jellyfin was down) and acts as a periodic full reconciliation. Safe
-    /// to call from multiple trigger points; overlapping calls are skipped
-    /// rather than queued.
+    /// Full run for one linked user: rebuilds the library snapshot
+    /// unconditionally and does push-then-pull for every enabled category.
+    /// The expensive path -- covers pushing anything the live listener
+    /// missed (e.g. while Jellyfin was down) and acts as a periodic full
+    /// reconciliation. Safe to call from multiple trigger points;
+    /// overlapping calls (for this user or any other) are skipped rather
+    /// than queued.
     /// </summary>
+    /// <param name="userId">The linked Jellyfin user to sync.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>True if a run actually executed.</returns>
-    public async Task<bool> RunAsync(CancellationToken cancellationToken)
+    public async Task<bool> RunAsync(Guid userId, CancellationToken cancellationToken)
     {
         using var handle = TryLock();
         if (handle is null)
@@ -115,14 +117,48 @@ public sealed class SyncOrchestrator : IDisposable
             return false;
         }
 
-        var linked = ResolveLinkedUser();
+        var linked = ResolveLinkedUser(userId);
         if (linked is null)
         {
             return false;
         }
 
-        var (user, config) = linked.Value;
+        return await RunForUserAsync(linked.Value.User, linked.Value.Config, cancellationToken).ConfigureAwait(false);
+    }
 
+    /// <summary>
+    /// Full run for every linked user in turn, one at a time under a single
+    /// hold of the sync lock -- the scheduled-task equivalent of calling
+    /// <see cref="RunAsync"/> once per user.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>True if at least one user's run actually executed.</returns>
+    public async Task<bool> RunAllLinkedUsersAsync(CancellationToken cancellationToken)
+    {
+        using var handle = TryLock();
+        if (handle is null)
+        {
+            _logger.LogDebug("MDBList Sync: run already in progress, skipping");
+            return false;
+        }
+
+        var anyRan = false;
+        foreach (var config in LinkedUserConfigs())
+        {
+            var user = _userManager.GetUserById(config.JellyfinUserId);
+            if (user is null)
+            {
+                continue;
+            }
+
+            anyRan |= await RunForUserAsync(user, config, cancellationToken).ConfigureAwait(false);
+        }
+
+        return anyRan;
+    }
+
+    private async Task<bool> RunForUserAsync(User user, UserSyncConfig config, CancellationToken cancellationToken)
+    {
         var accessToken = await _oauthService.EnsureValidTokenAsync(user.Id, cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrEmpty(accessToken))
         {
@@ -194,13 +230,15 @@ public sealed class SyncOrchestrator : IDisposable
     }
 
     /// <summary>
-    /// Cheap poll: checks /sync/last_activities (a single lightweight GET)
-    /// and only pays for a library snapshot rebuild + pull when a relevant
-    /// bucket actually advanced since the last check.
+    /// Cheap poll for one linked user: checks /sync/last_activities (a
+    /// single lightweight GET) and only pays for a library snapshot
+    /// rebuild + pull when a relevant bucket actually advanced since the
+    /// last check.
     /// </summary>
+    /// <param name="userId">The linked Jellyfin user to check.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>True if a pull actually ran.</returns>
-    public async Task<bool> CheckActivityAsync(CancellationToken cancellationToken)
+    public async Task<bool> CheckActivityAsync(Guid userId, CancellationToken cancellationToken)
     {
         using var handle = TryLock();
         if (handle is null)
@@ -209,14 +247,48 @@ public sealed class SyncOrchestrator : IDisposable
             return false;
         }
 
-        var linked = ResolveLinkedUser();
+        var linked = ResolveLinkedUser(userId);
         if (linked is null)
         {
             return false;
         }
 
-        var (user, config) = linked.Value;
+        return await CheckActivityForUserAsync(linked.Value.User, linked.Value.Config, cancellationToken).ConfigureAwait(false);
+    }
 
+    /// <summary>
+    /// Cheap poll for every linked user in turn, one at a time under a
+    /// single hold of the sync lock -- the scheduled-task equivalent of
+    /// calling <see cref="CheckActivityAsync"/> once per user.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>True if at least one user's pull actually ran.</returns>
+    public async Task<bool> CheckAllActivityAsync(CancellationToken cancellationToken)
+    {
+        using var handle = TryLock();
+        if (handle is null)
+        {
+            _logger.LogDebug("MDBList Sync: activity check skipped, a run is already in progress");
+            return false;
+        }
+
+        var anyRan = false;
+        foreach (var config in LinkedUserConfigs())
+        {
+            var user = _userManager.GetUserById(config.JellyfinUserId);
+            if (user is null)
+            {
+                continue;
+            }
+
+            anyRan |= await CheckActivityForUserAsync(user, config, cancellationToken).ConfigureAwait(false);
+        }
+
+        return anyRan;
+    }
+
+    private async Task<bool> CheckActivityForUserAsync(User user, UserSyncConfig config, CancellationToken cancellationToken)
+    {
         var accessToken = await _oauthService.EnsureValidTokenAsync(user.Id, cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrEmpty(accessToken))
         {
@@ -297,9 +369,9 @@ public sealed class SyncOrchestrator : IDisposable
         _gate.Dispose();
     }
 
-    private (User User, UserSyncConfig Config)? ResolveLinkedUser()
+    private (User User, UserSyncConfig Config)? ResolveLinkedUser(Guid userId)
     {
-        var linkedUserConfig = Plugin.Instance?.Configuration.Users.FirstOrDefault();
+        var linkedUserConfig = Plugin.Instance?.Configuration.Users.FirstOrDefault(u => u.JellyfinUserId == userId);
         if (linkedUserConfig is null)
         {
             return null;
@@ -307,6 +379,15 @@ public sealed class SyncOrchestrator : IDisposable
 
         var user = _userManager.GetUserById(linkedUserConfig.JellyfinUserId);
         return user is null ? null : (user, linkedUserConfig);
+    }
+
+    /// <summary>
+    /// Snapshots the currently-linked users, so a slow per-user run can't
+    /// be affected by a config save that adds/removes an entry mid-loop.
+    /// </summary>
+    private static List<UserSyncConfig> LinkedUserConfigs()
+    {
+        return Plugin.Instance?.Configuration.Users.ToList() ?? [];
     }
 
     private static bool AnyBucketAdvanced(Dictionary<string, string> seen, Dictionary<string, string> current, params string[] keys)

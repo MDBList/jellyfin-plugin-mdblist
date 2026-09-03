@@ -118,7 +118,7 @@ public class MDBListController : ControllerBase
     [HttpPost("Users/{userId}/Sync")]
     public async Task<ActionResult<SyncStatusResult>> Sync(Guid userId, CancellationToken cancellationToken)
     {
-        await _orchestrator.RunAsync(cancellationToken).ConfigureAwait(false);
+        await _orchestrator.RunAsync(userId, cancellationToken).ConfigureAwait(false);
         return Ok(await BuildStatusAsync(userId, cancellationToken).ConfigureAwait(false));
     }
 
