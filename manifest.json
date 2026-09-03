@@ -7,8 +7,16 @@
         "owner": "linaspurinis",
         "category": "General",
         "image": "image.png",
-        "imageUrl": "/mdblist/image.png",
+        "imageUrl": "https://raw.githubusercontent.com/linaspurinis/jellyfin-plugin-mdblist/gh-pages/mdblist/image.png",
         "versions": [
+            {
+                "version": "1.0.0.2",
+                "changelog": "1.0.0.2: Fixes the plugin catalog icon's URL -- 1.0.0.1 published one with no host, which Jellyfin couldn't fetch at all.\n\n1.0.0.1: Fixes scheduled syncs, \"Sync now\", and live scrobbling only ever acting on the first linked user when multiple Jellyfin users each have their own MDBList account connected. Adds a plugin catalog icon.\n\n1.0.0.0: Initial release. Two-way sync of watched status and ratings, push-only collection sync, live playback scrobbling to MDBList's /scrobble endpoints, OAuth device-code authentication, incremental cursor-based pulls with automatic full-reconciliation fallback, a 24h scheduled full sync plus a 15-minute activity-gated cheap poll, and a config page for connecting your account and choosing what to sync.\n",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://github.com/linaspurinis/jellyfin-plugin-mdblist/releases/download/v1.0.0.2/mdblist_1.0.0.2.zip",
+                "checksum": "b3ed8842d7cd9892443feea6d9bd88e5",
+                "timestamp": "2026-09-03T08:09:17Z"
+            },
             {
                 "version": "1.0.0.1",
                 "changelog": "1.0.0.1: Fixes scheduled syncs, \"Sync now\", and live scrobbling only ever acting on the first linked user when multiple Jellyfin users each have their own MDBList account connected. Adds a plugin catalog icon.\n\n1.0.0.0: Initial release. Two-way sync of watched status and ratings, push-only collection sync, live playback scrobbling to MDBList's /scrobble endpoints, OAuth device-code authentication, incremental cursor-based pulls with automatic full-reconciliation fallback, a 24h scheduled full sync plus a 15-minute activity-gated cheap poll, and a config page for connecting your account and choosing what to sync.\n",
