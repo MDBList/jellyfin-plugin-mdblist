@@ -78,12 +78,19 @@ public class MDBListController : ControllerBase
     /// </summary>
     /// <param name="userId">The Jellyfin user to disconnect.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>No content.</returns>
+    /// <returns>An empty JSON object.</returns>
     [HttpPost("Users/{userId}/Disconnect")]
     public async Task<ActionResult> Disconnect(Guid userId, CancellationToken cancellationToken)
     {
         await _oauthService.DisconnectAsync(userId, cancellationToken).ConfigureAwait(false);
-        return NoContent();
+
+        // A real (if empty) JSON body, not 204 No Content: the config
+        // page's ApiClient.fetch call expects JSON back (same as every
+        // other endpoint here) and throws trying to parse a genuinely
+        // empty response body -- confirmed live, the disconnect itself
+        // succeeds every time, only the client-side "Failed to disconnect"
+        // alert was wrong.
+        return Ok(new { });
     }
 
     /// <summary>

@@ -240,6 +240,7 @@
                 ApiClient.fetch({
                     url: ApiClient.getUrl('MDBList/Users/' + userId + '/Disconnect'),
                     type: 'POST',
+                    dataType: 'json',
                     headers: { accept: 'application/json' }
                 }).then(function () {
                     Dashboard.hideLoadingMsg();
