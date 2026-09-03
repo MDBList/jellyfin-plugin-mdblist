@@ -10,6 +10,14 @@
         "imageUrl": "https://raw.githubusercontent.com/linaspurinis/jellyfin-plugin-mdblist/gh-pages/mdblist/image.png",
         "versions": [
             {
+                "version": "1.0.0.3",
+                "changelog": "1.0.0.3: Fixes \"Disconnect\" always showing a failure alert even though it always succeeded. Updates the plugin catalog icon to a full-bleed 16:9 image instead of a square logo that Jellyfin's plugin page was cropping.\n\n1.0.0.2: Fixes the plugin catalog icon's URL -- 1.0.0.1 published one with no host, which Jellyfin couldn't fetch at all.\n\n1.0.0.1: Fixes scheduled syncs, \"Sync now\", and live scrobbling only ever acting on the first linked user when multiple Jellyfin users each have their own MDBList account connected. Adds a plugin catalog icon.\n\n1.0.0.0: Initial release. Two-way sync of watched status and ratings, push-only collection sync, live playback scrobbling to MDBList's /scrobble endpoints, OAuth device-code authentication, incremental cursor-based pulls with automatic full-reconciliation fallback, a 24h scheduled full sync plus a 15-minute activity-gated cheap poll, and a config page for connecting your account and choosing what to sync.\n",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://github.com/linaspurinis/jellyfin-plugin-mdblist/releases/download/v1.0.0.3/mdblist_1.0.0.3.zip",
+                "checksum": "37eaf80b84c20c3f64cf573bcfe87305",
+                "timestamp": "2026-09-03T08:49:57Z"
+            },
+            {
                 "version": "1.0.0.2",
                 "changelog": "1.0.0.2: Fixes the plugin catalog icon's URL -- 1.0.0.1 published one with no host, which Jellyfin couldn't fetch at all.\n\n1.0.0.1: Fixes scheduled syncs, \"Sync now\", and live scrobbling only ever acting on the first linked user when multiple Jellyfin users each have their own MDBList account connected. Adds a plugin catalog icon.\n\n1.0.0.0: Initial release. Two-way sync of watched status and ratings, push-only collection sync, live playback scrobbling to MDBList's /scrobble endpoints, OAuth device-code authentication, incremental cursor-based pulls with automatic full-reconciliation fallback, a 24h scheduled full sync plus a 15-minute activity-gated cheap poll, and a config page for connecting your account and choosing what to sync.\n",
                 "targetAbi": "10.11.0.0",
