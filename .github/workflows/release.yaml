@@ -61,7 +61,16 @@ jobs:
         run: |
           export PATH="$PATH:$HOME/.local/bin"
           ZIP_NAME=$(basename artifacts/*.zip)
+          # -u is the repo's own base URL, used to build the plugin's
+          # imageUrl (repo_url/slug/image); -U is the zip's own download
+          # URL. GitHub Pages was never actually enabled for this repo --
+          # raw.githubusercontent.com serving the gh-pages branch directly
+          # is what the README's own repository URL already relies on, so
+          # that's the real base to point -u at too, confirmed live after
+          # the omitted -u produced a bare "/mdblist/image.png" with no
+          # host, which the Jellyfin server couldn't fetch at all.
           jprm repo add public "artifacts/${ZIP_NAME}" \
+            -u "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/gh-pages" \
             -U "https://github.com/${GITHUB_REPOSITORY}/releases/download/${{ steps.version.outputs.tag }}/${ZIP_NAME}"
 
       - name: Publish manifest to gh-pages
