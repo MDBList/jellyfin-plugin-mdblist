@@ -1,7 +1,7 @@
 ---
 name: "MDBList"
 guid: "cbca79d7-ecde-4030-833c-3862f3c3a737"
-version: "1.0.0.2"
+version: "1.0.0.3"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 overview: "Two-way sync of watched status and ratings, plus collection sync, against MDBList"
@@ -15,6 +15,12 @@ owner: "linaspurinis"
 artifacts:
 - "Jellyfin.Plugin.MDBList.dll"
 changelog: >
+  1.0.0.3: Fixes "Disconnect" always showing a failure alert even though
+  it always succeeded. Updates the plugin catalog icon to a full-bleed
+  16:9 image instead of a square logo that Jellyfin's plugin page was
+  cropping.
+
+
   1.0.0.2: Fixes the plugin catalog icon's URL -- 1.0.0.1 published one
   with no host, which Jellyfin couldn't fetch at all.
 
