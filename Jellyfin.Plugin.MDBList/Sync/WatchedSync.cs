@@ -82,9 +82,11 @@ public class WatchedSync
             current,
             items => _payloadBuilder.PushItemsAsync(accessToken, Endpoint, FieldName, items, GetWatchedAtValue, cancellationToken),
             items => _payloadBuilder.PushItemsRemoveAsync(accessToken, RemoveEndpoint, items, cancellationToken),
-            valueChanged: null,
+            valueChanged: HasWatchedAtChanged,
             cancellationToken).ConfigureAwait(false);
     }
+
+    internal static bool HasWatchedAtChanged(KnownSyncItem known, KnownSyncItem item) => known.WatchedAt != item.WatchedAt;
 
     /// <summary>
     /// Immediate push for one item, triggered by a live <c>UserDataSaved</c>

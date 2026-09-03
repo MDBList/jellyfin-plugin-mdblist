@@ -82,4 +82,20 @@ public class WatchedConflictResolutionTests
     {
         Assert.True(WatchedSync.ShouldApplyRemoteWatched(removed: true, localPlayCount: 1, localTs: Earlier, remoteTs: null));
     }
+
+    [Fact]
+    public void HasWatchedAtChanged_DifferentTimestamp_ReturnsTrue()
+    {
+        var known = new KnownSyncItem { WatchedAt = "2026-01-01T00:00:00Z" };
+        var current = new KnownSyncItem { WatchedAt = "2026-01-02T00:00:00Z" };
+        Assert.True(WatchedSync.HasWatchedAtChanged(known, current));
+    }
+
+    [Fact]
+    public void HasWatchedAtChanged_SameTimestamp_ReturnsFalse()
+    {
+        var known = new KnownSyncItem { WatchedAt = "2026-01-01T00:00:00Z" };
+        var current = new KnownSyncItem { WatchedAt = "2026-01-01T00:00:00Z" };
+        Assert.False(WatchedSync.HasWatchedAtChanged(known, current));
+    }
 }

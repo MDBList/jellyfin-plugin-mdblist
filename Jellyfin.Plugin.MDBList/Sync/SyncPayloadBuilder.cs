@@ -125,8 +125,8 @@ public class SyncPayloadBuilder
     /// <param name="pushRemove">Called with newly-removed items to push.</param>
     /// <param name="valueChanged">
     /// Optional: also add an item whose key is already known but whose value
-    /// differs (e.g. a rating change) -- membership-only categories
-    /// (watched, collection) leave this null.
+    /// differs (e.g. a rating change or updated watch date) -- membership-only
+    /// categories (collection) leave this null.
     /// </param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <param name="allowRemovals">
