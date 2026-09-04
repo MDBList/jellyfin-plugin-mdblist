@@ -363,7 +363,20 @@ public class WatchedSync
         }
         else
         {
-            SetWatched(user, record.ItemId, played: true, playCount: Math.Max(record.PlayCount, 1), lastPlayedDate: remoteTs ?? record.LastPlayedDate);
+            // Treat Jellyfin watch dates as the source of truth during two-way sync:
+            // If the item is already watched locally with an established watch date,
+            // preserve Jellyfin's local LastPlayedDate rather than overwriting with the remote timestamp.
+            var effectiveDate = (record.Played && record.LastPlayedDate.HasValue)
+                ? record.LastPlayedDate
+                : (remoteTs ?? record.LastPlayedDate);
+
+            // If already played locally with an established date, no local modification is needed.
+            if (record.Played && record.LastPlayedDate.HasValue && record.PlayCount > 0)
+            {
+                return false;
+            }
+
+            SetWatched(user, record.ItemId, played: true, playCount: Math.Max(record.PlayCount, 1), lastPlayedDate: effectiveDate);
         }
 
         return true;
