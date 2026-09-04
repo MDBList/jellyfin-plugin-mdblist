@@ -82,7 +82,7 @@ public class WatchedSync
             current,
             items => _payloadBuilder.PushItemsAsync(accessToken, Endpoint, FieldName, items, GetWatchedAtValue, cancellationToken),
             items => _payloadBuilder.PushItemsRemoveAsync(accessToken, RemoveEndpoint, items, cancellationToken),
-            valueChanged: null,
+            valueChanged: (known, item) => known.WatchedAt != item.WatchedAt,
             cancellationToken).ConfigureAwait(false);
     }
 
