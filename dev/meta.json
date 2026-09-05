@@ -1,6 +1,6 @@
 {
   "category": "General",
-  "changelog": "1.0.0.5: Fixes watched-status sync dropping rewatch-date-only updates during full reconciliation. 1.0.0.4: Fixes install failures (Status: NotSupported) on Jellyfin 10.11.1-10.11.10. 1.0.0.3: Fixes Disconnect failure alert, updated plugin catalog icon. 1.0.0.2: Fixes plugin catalog icon URL. 1.0.0.1: Multi-user sync fix, plugin catalog icon.",
+  "changelog": "1.0.0.6: Fixes hitting MDBList's rate limit on a large first sync (adds retry/backoff and request pacing on 429) and fixes losing sync progress if a run is interrupted (push progress now saved per-batch). 1.0.0.5: Fixes watched-status sync dropping rewatch-date-only updates during full reconciliation. 1.0.0.4: Fixes install failures (Status: NotSupported) on Jellyfin 10.11.1-10.11.10. 1.0.0.3: Fixes Disconnect failure alert, updated plugin catalog icon. 1.0.0.2: Fixes plugin catalog icon URL. 1.0.0.1: Multi-user sync fix, plugin catalog icon.",
   "description": "Two-way sync of watched status and ratings, plus collection sync, against MDBList",
   "guid": "cbca79d7-ecde-4030-833c-3862f3c3a737",
   "name": "MDBList",
