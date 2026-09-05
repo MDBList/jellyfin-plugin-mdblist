@@ -85,8 +85,8 @@ public class CollectionSync
             userId,
             Category,
             current,
-            items => _payloadBuilder.PushItemsAsync(accessToken, Endpoint, FieldName, items, GetCollectedAtValue, cancellationToken),
-            items => _payloadBuilder.PushItemsRemoveAsync(accessToken, RemoveEndpoint, items, cancellationToken),
+            items => _payloadBuilder.PushItemsAsync(userId, Category, accessToken, Endpoint, FieldName, items, GetCollectedAtValue, cancellationToken),
+            items => _payloadBuilder.PushItemsRemoveAsync(userId, Category, accessToken, RemoveEndpoint, items, cancellationToken),
             valueChanged: null,
             cancellationToken,
             allowRemovals).ConfigureAwait(false);

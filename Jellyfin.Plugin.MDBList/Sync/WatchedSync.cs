@@ -80,8 +80,8 @@ public class WatchedSync
             userId,
             Category,
             current,
-            items => _payloadBuilder.PushItemsAsync(accessToken, Endpoint, FieldName, items, GetWatchedAtValue, cancellationToken),
-            items => _payloadBuilder.PushItemsRemoveAsync(accessToken, RemoveEndpoint, items, cancellationToken),
+            items => _payloadBuilder.PushItemsAsync(userId, Category, accessToken, Endpoint, FieldName, items, GetWatchedAtValue, cancellationToken),
+            items => _payloadBuilder.PushItemsRemoveAsync(userId, Category, accessToken, RemoveEndpoint, items, cancellationToken),
             valueChanged: (known, item) => known.WatchedAt != item.WatchedAt,
             cancellationToken).ConfigureAwait(false);
     }
@@ -116,8 +116,7 @@ public class WatchedSync
                 return PushOutcome.NoOp;
             }
 
-            await _payloadBuilder.PushItemsAsync(accessToken, Endpoint, FieldName, [item], GetWatchedAtValue, cancellationToken).ConfigureAwait(false);
-            await _stateStore.UpdateKnownItemAsync(userId, Category, key, item, cancellationToken).ConfigureAwait(false);
+            await _payloadBuilder.PushItemsAsync(userId, Category, accessToken, Endpoint, FieldName, [item], GetWatchedAtValue, cancellationToken).ConfigureAwait(false);
             return PushOutcome.Added;
         }
 
@@ -126,8 +125,7 @@ public class WatchedSync
             return PushOutcome.NoOp;
         }
 
-        await _payloadBuilder.PushItemsRemoveAsync(accessToken, RemoveEndpoint, [knownItem], cancellationToken).ConfigureAwait(false);
-        await _stateStore.UpdateKnownItemAsync(userId, Category, key, null, cancellationToken).ConfigureAwait(false);
+        await _payloadBuilder.PushItemsRemoveAsync(userId, Category, accessToken, RemoveEndpoint, [knownItem], cancellationToken).ConfigureAwait(false);
         return PushOutcome.Removed;
     }
 

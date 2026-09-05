@@ -119,57 +119,39 @@ public sealed class SyncStateStore : IDisposable
     }
 
     /// <summary>
-    /// Replaces the whole known-items map for a category -- used by a
-    /// full-diff push, which examines the entire current library each time.
+    /// Merges a batch of upserts and removals into a category's known-items
+    /// map in one disk round trip -- used to persist push progress
+    /// chunk-by-chunk rather than only once at the very end of a whole
+    /// category's diff. That way, if a later chunk aborts the run (e.g. a
+    /// rate limit that survives its retry budget), the chunks that already
+    /// pushed successfully are not forgotten and re-pushed from scratch on
+    /// the next attempt.
     /// </summary>
     /// <param name="userId">The Jellyfin user.</param>
     /// <param name="category">The sync category.</param>
-    /// <param name="items">The new known-items map.</param>
+    /// <param name="upserts">Items to add or update, keyed by canonical id.</param>
+    /// <param name="removedKeys">Canonical ids to remove.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    public async Task SetKnownItemsAsync(
+    public async Task MergeKnownItemsAsync(
         Guid userId,
         SyncCategory category,
-        IReadOnlyDictionary<string, KnownSyncItem> items,
+        IReadOnlyDictionary<string, KnownSyncItem> upserts,
+        IReadOnlyCollection<string> removedKeys,
         CancellationToken cancellationToken)
     {
         await MutateAsync(
             file =>
             {
                 var state = GetCategoryState(GetOrCreateUserState(file, userId), category);
-                state.KnownItems.Clear();
-                foreach (var (key, value) in items)
+                foreach (var (key, value) in upserts)
                 {
                     state.KnownItems[key] = value;
                 }
-            },
-            cancellationToken).ConfigureAwait(false);
-    }
 
-    /// <summary>
-    /// Patches a single key in a category's known-items map -- used by a
-    /// single-item live push, which only ever examines one item, not the
-    /// whole library.
-    /// </summary>
-    /// <param name="userId">The Jellyfin user.</param>
-    /// <param name="category">The sync category.</param>
-    /// <param name="key">The canonical key.</param>
-    /// <param name="item">The new item, or null to remove the key.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>A task representing the asynchronous operation.</returns>
-    public async Task UpdateKnownItemAsync(Guid userId, SyncCategory category, string key, KnownSyncItem? item, CancellationToken cancellationToken)
-    {
-        await MutateAsync(
-            file =>
-            {
-                var state = GetCategoryState(GetOrCreateUserState(file, userId), category);
-                if (item is null)
+                foreach (var key in removedKeys)
                 {
                     state.KnownItems.Remove(key);
-                }
-                else
-                {
-                    state.KnownItems[key] = item;
                 }
             },
             cancellationToken).ConfigureAwait(false);
