@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -26,10 +27,50 @@ namespace Jellyfin.Plugin.MDBList.Api;
 /// than being coerced into an empty/default value -- diff-based sync reads
 /// "no data" as authoritative, so a real failure must abort the run instead
 /// of looking like "there is nothing to sync".
+///
+/// Also owns two safeguards against api.mdblist's short-window throttle
+/// (300 write / 1000 read requests per rolling 5-minute window, separate
+/// from and much tighter than the daily quota): every request is paced to a
+/// fixed minimum interval before it's sent (<see cref="RequestPacer"/>), and
+/// a 429 response is retried with the server's own requested
+/// <c>Retry-After</c> wait rather than immediately failing the whole sync
+/// run. A large first sync (thousands of items, chunked across three
+/// categories) is exactly the case that used to blow through the write
+/// budget in one uninterrupted burst.
 /// </summary>
 public class MDBListApiClient
 {
     private const string BaseUrl = "https://api.mdblist.com";
+
+    /// <summary>
+    /// How many times a 429 is retried before giving up and throwing.
+    /// </summary>
+    private const int MaxRateLimitRetries = 3;
+
+    /// <summary>
+    /// A 429's <c>Retry-After</c> is auto-retried only up to this wait --
+    /// enough to ride out the ~300s short-window throttle, but not the
+    /// daily quota's "retry after midnight UTC" (which can be many hours).
+    /// </summary>
+    private static readonly TimeSpan MaxAutoRetryDelay = TimeSpan.FromSeconds(310);
+
+    /// <summary>
+    /// Fallback wait for a 429 that, unexpectedly, carries no
+    /// <c>Retry-After</c> header at all.
+    /// </summary>
+    private static readonly TimeSpan DefaultRetryAfterDelay = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// api.mdblist's write bucket allows 300 requests / 300s -- exactly 1/s
+    /// sustained. Pacing writes a touch slower than that means a bulk push
+    /// should never trip the throttle on its own.
+    /// </summary>
+    private static readonly RequestPacer WritePacer = new(TimeSpan.FromMilliseconds(1100));
+
+    /// <summary>
+    /// api.mdblist's read bucket allows 1000 requests / 300s (~3.3/s).
+    /// </summary>
+    private static readonly RequestPacer ReadPacer = new(TimeSpan.FromMilliseconds(320));
 
     // Response models expose their collections as get-only (Collection<T>/
     // Dictionary<TKey,TValue>) to satisfy CA2227/CA1002 -- but
@@ -253,34 +294,99 @@ public class MDBListApiClient
             }
         }
 
-        var client = _httpClientFactory.CreateClient(NamedClient.Default);
-        using var request = new HttpRequestMessage(method, url);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-        if (jsonBody is not null)
-        {
-            request.Content = JsonContent.Create(jsonBody);
-        }
+        // GET is the only read verb this client ever issues (see every
+        // caller above) -- everything else (POST) draws from the write
+        // bucket, which api.mdblist polices far tighter (300 vs 1000 per
+        // 5-minute window).
+        var pacer = method == HttpMethod.Get ? ReadPacer : WritePacer;
 
-        HttpResponseMessage response;
-        try
+        for (var attempt = 0; ; attempt++)
         {
-            response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
-        }
-        catch (HttpRequestException ex)
-        {
-            throw new MDBListApiException(ex.Message, ex);
-        }
+            await pacer.WaitAsync(cancellationToken).ConfigureAwait(false);
 
-        using (response)
-        {
-            var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode)
+            // Rebuilt every attempt rather than reused across a retry: an
+            // HttpRequestMessage can only ever be sent once (HttpClient
+            // throws on reuse), so a fresh request/content per attempt is
+            // required, not just defensive.
+            var client = _httpClientFactory.CreateClient(NamedClient.Default);
+            using var request = new HttpRequestMessage(method, url);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            if (jsonBody is not null)
             {
-                var truncated = text.Length <= 200 ? text : text[..200];
-                throw new MDBListApiException($"API Error {(int)response.StatusCode}: {truncated}");
+                request.Content = JsonContent.Create(jsonBody);
             }
 
-            return text;
+            HttpResponseMessage response;
+            try
+            {
+                response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            }
+            catch (HttpRequestException ex)
+            {
+                throw new MDBListApiException(ex.Message, ex);
+            }
+
+            using (response)
+            {
+                var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    return text;
+                }
+
+                var truncated = text.Length <= 200 ? text : text[..200];
+
+                if (response.StatusCode == HttpStatusCode.TooManyRequests)
+                {
+                    var retryAfter = response.Headers.RetryAfter?.Delta ?? DefaultRetryAfterDelay;
+                    if (attempt < MaxRateLimitRetries && retryAfter <= MaxAutoRetryDelay)
+                    {
+                        await Task.Delay(retryAfter, cancellationToken).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    throw new MDBListApiException($"API Error 429: {truncated}", HttpStatusCode.TooManyRequests, retryAfter);
+                }
+
+                throw new MDBListApiException($"API Error {(int)response.StatusCode}: {truncated}", response.StatusCode, retryAfter: null);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Spaces out requests to a fixed minimum interval, blocking (via delay,
+    /// not a thread) whichever caller would otherwise send too soon. Shared
+    /// statically across every <see cref="MDBListApiClient"/> instance in
+    /// the process, since api.mdblist's rate-limit budget is per-account,
+    /// not per-instance.
+    /// </summary>
+    private sealed class RequestPacer
+    {
+        private readonly TimeSpan _minInterval;
+        private readonly object _gate = new();
+        private DateTime _nextSlotUtc = DateTime.MinValue;
+
+        public RequestPacer(TimeSpan minInterval)
+        {
+            _minInterval = minInterval;
+        }
+
+        public async Task WaitAsync(CancellationToken cancellationToken)
+        {
+            TimeSpan delay;
+            lock (_gate)
+            {
+                var now = DateTime.UtcNow;
+                var slot = _nextSlotUtc > now ? _nextSlotUtc : now;
+                delay = slot - now;
+                _nextSlotUtc = slot + _minInterval;
+            }
+
+            if (delay > TimeSpan.Zero)
+            {
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+            }
         }
     }
 }
