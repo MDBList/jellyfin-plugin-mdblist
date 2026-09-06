@@ -230,11 +230,12 @@ public sealed class SyncOrchestrator : IDisposable
                     .ConfigureAwait(false);
                 watchedSummary = string.Format(
                     CultureInfo.InvariantCulture,
-                    "watched push +{0}/-{1}{2} pull {3} ({4})",
+                    "watched push +{0}/-{1}{2} pull {3}{4} ({5})",
                     watchedPush.PushedAdd,
                     watchedPush.PushedRemove,
                     watchedPush.SkippedRemove > 0 ? $" ({watchedPush.SkippedRemove} skipped)" : string.Empty,
                     watchedPull.PulledApplied,
+                    watchedPull.SkippedRemove > 0 ? $" ({watchedPull.SkippedRemove} unwatch skipped)" : string.Empty,
                     watchedPull.Mode);
             }
 

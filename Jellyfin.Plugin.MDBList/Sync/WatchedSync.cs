@@ -12,6 +12,7 @@ using Jellyfin.Plugin.MDBList.Library;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.MDBList.Sync;
 
@@ -41,6 +42,7 @@ public class WatchedSync
     private readonly MDBListApiClient _apiClient;
     private readonly ILibraryManager _libraryManager;
     private readonly IUserDataManager _userDataManager;
+    private readonly ILogger<WatchedSync> _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="WatchedSync"/> class.
@@ -50,18 +52,21 @@ public class WatchedSync
     /// <param name="apiClient">Instance of the <see cref="MDBListApiClient"/>.</param>
     /// <param name="libraryManager">Instance of the <see cref="ILibraryManager"/> interface.</param>
     /// <param name="userDataManager">Instance of the <see cref="IUserDataManager"/> interface.</param>
+    /// <param name="logger">Instance of the <see cref="ILogger{WatchedSync}"/> interface.</param>
     public WatchedSync(
         SyncPayloadBuilder payloadBuilder,
         SyncStateStore stateStore,
         MDBListApiClient apiClient,
         ILibraryManager libraryManager,
-        IUserDataManager userDataManager)
+        IUserDataManager userDataManager,
+        ILogger<WatchedSync> logger)
     {
         _payloadBuilder = payloadBuilder;
         _stateStore = stateStore;
         _apiClient = apiClient;
         _libraryManager = libraryManager;
         _userDataManager = userDataManager;
+        _logger = logger;
     }
 
     /// <summary>
@@ -223,43 +228,99 @@ public class WatchedSync
         // journal's 30-day retention window has lapsed, so there's no
         // incremental removal feed to rely on instead.
         //
-        // The removal timestamp is the server-provided watermark, not "now":
-        // if the item was genuinely rewatched between when the server
-        // generated this snapshot and now, its local timestamp needs to be
-        // newer than server_time (not a later client-side "now") to
-        // correctly win the conflict-resolution check in ApplyWatched.
-        var removalAt = serverTime ?? NowIso();
-
+        // This is the same "known minus current-read = remove" shape
+        // DiffAndReconcileAsync guards against on push, just mirrored to the
+        // opposite direction: a successful-but-degraded /sync/watched
+        // response would otherwise read as "everything was unwatched
+        // remotely" and wipe local state. Same two guards, same constants --
+        // see removal_safety_pattern.md.
+        var locallyWatched = new List<(SnapshotItem Record, string Key)>();
         foreach (var movie in snapshot.Movies)
         {
-            if (!movie.Played)
+            var key = movie.Played ? ItemKeys.CanonicalMovieKey(movie.Ids) : null;
+            if (key is not null)
             {
-                continue;
-            }
-
-            var key = ItemKeys.CanonicalMovieKey(movie.Ids);
-            if (key is not null && !matchedKeys.Contains(key) && ApplyWatched(user, movie, "removed", removalAt))
-            {
-                applied++;
+                locallyWatched.Add((movie, key));
             }
         }
 
         foreach (var episode in snapshot.Episodes)
         {
-            if (!episode.Played)
+            var key = episode.Played ? ItemKeys.CanonicalEpisodeKey(episode.Ids, episode.Season, episode.EpisodeNumber) : null;
+            if (key is not null)
             {
-                continue;
+                locallyWatched.Add((episode, key));
             }
+        }
 
-            var key = ItemKeys.CanonicalEpisodeKey(episode.Ids, episode.Season, episode.EpisodeNumber);
-            if (key is not null && !matchedKeys.Contains(key) && ApplyWatched(user, episode, "removed", removalAt))
+        var candidateRemovals = locallyWatched.Where(w => !matchedKeys.Contains(w.Key)).ToList();
+        var holdRemovals = candidateRemovals.Count > 0
+            && ShouldHoldPullRemovals(data.Movies.Count + data.Episodes.Count, candidateRemovals.Count, locallyWatched.Count);
+
+        if (candidateRemovals.Count > 0 && !holdRemovals)
+        {
+            // The removal timestamp is the server-provided watermark, not
+            // "now": if the item was genuinely rewatched between when the
+            // server generated this snapshot and now, its local timestamp
+            // needs to be newer than server_time (not a later client-side
+            // "now") to correctly win the conflict-resolution check in
+            // ApplyWatched.
+            var removalAt = serverTime ?? NowIso();
+            foreach (var (record, _) in candidateRemovals)
             {
-                applied++;
+                if (ApplyWatched(user, record, "removed", removalAt))
+                {
+                    applied++;
+                }
             }
+        }
+
+        if (holdRemovals)
+        {
+            // Held, not dropped -- don't advance the watermark either, so
+            // the next pull retries a full reconcile from scratch (and, per
+            // PullAsync, keeps landing back here) instead of downgrading to
+            // the incremental journal path and never revisiting these
+            // items.
+            return new PullResult { PulledApplied = applied, Mode = "full", SkippedRemove = candidateRemovals.Count };
         }
 
         await _stateStore.SetSyncedAtAsync(userId, Category, serverTime ?? NowIso(), cancellationToken).ConfigureAwait(false);
         return new PullResult { PulledApplied = applied, Mode = "full" };
+    }
+
+    /// <summary>
+    /// Same shape as <see cref="SyncPayloadBuilder.DiffAndReconcileAsync"/>'s
+    /// removal guard, applied to the pull-direction full reconcile: a
+    /// totally-empty remote read next to known-watched items is always held,
+    /// and otherwise a batch larger than
+    /// max(<see cref="SyncPayloadBuilder.RemovalMinBatch"/>, knownCount *
+    /// <see cref="SyncPayloadBuilder.RemovalMaxFraction"/>) is held too.
+    /// </summary>
+    private bool ShouldHoldPullRemovals(int remoteCount, int candidateCount, int knownCount)
+    {
+        if (remoteCount == 0)
+        {
+            _logger.LogWarning(
+                "MDBList Sync: watched pull removal held - remote full list came back empty while {KnownCount} items are locally "
+                    + "watched; treating as an unreliable read rather than a real removal",
+                knownCount);
+            return true;
+        }
+
+        var threshold = Math.Max(SyncPayloadBuilder.RemovalMinBatch, (int)(knownCount * SyncPayloadBuilder.RemovalMaxFraction));
+        if (candidateCount > threshold)
+        {
+            _logger.LogWarning(
+                "MDBList Sync: watched pull removal held - {Count} of {KnownCount} locally watched items would be unwatched "
+                    + "(threshold {Threshold}); remote read may be incomplete",
+                candidateCount,
+                knownCount,
+                threshold);
+            return true;
+        }
+
+        return false;
     }
 
     private async Task<PullResult> PullIncrementalAsync(

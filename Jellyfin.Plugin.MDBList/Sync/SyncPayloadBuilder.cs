@@ -26,12 +26,14 @@ public class SyncPayloadBuilder
     /// <see cref="DiffAndReconcileAsync"/>. Fixed, not user-configurable:
     /// there's a single correct answer here, not a per-user preference.
     /// Same shape/defaults as the Kodi addon and trakt-list's removal
-    /// safety pattern, for ecosystem-wide consistency.
+    /// safety pattern, for ecosystem-wide consistency. Internal (not
+    /// private) so <see cref="WatchedSync"/>'s pull-side full reconcile can
+    /// apply the same guard against its own diff-based removal.
     /// </summary>
-    private const double RemovalMaxFraction = 0.30;
+    internal const double RemovalMaxFraction = 0.30;
 
     /// <summary>Trip threshold = max(this, knownCount * RemovalMaxFraction).</summary>
-    private const int RemovalMinBatch = 15;
+    internal const int RemovalMinBatch = 15;
 
     private static readonly JsonSerializerOptions IdsSerializerOptions = new()
     {
