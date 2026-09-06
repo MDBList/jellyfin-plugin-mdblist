@@ -407,7 +407,12 @@ public sealed class SyncOrchestrator : IDisposable
             {
                 var watchedPull = await _watchedSync.PullAsync(user.Id, accessToken, user, snapshot, activities.ServerTime, cancellationToken)
                     .ConfigureAwait(false);
-                summaries.Add(string.Format(CultureInfo.InvariantCulture, "watched pull {0} ({1})", watchedPull.PulledApplied, watchedPull.Mode));
+                summaries.Add(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "watched pull {0}{1} ({2})",
+                    watchedPull.PulledApplied,
+                    watchedPull.SkippedRemove > 0 ? $" ({watchedPull.SkippedRemove} unwatch skipped)" : string.Empty,
+                    watchedPull.Mode));
             }
 
             if (ratingsChanged)
