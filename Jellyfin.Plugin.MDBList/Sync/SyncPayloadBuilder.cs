@@ -220,7 +220,9 @@ public class SyncPayloadBuilder
     /// human-confirmed override should pass true (see SyncOrchestrator).
     /// Even when true, a removal batch larger than
     /// max(RemovalMinBatch, knownCount * RemovalMaxFraction) is skipped and
-    /// logged rather than pushed. This exists because a diff-based "clean"
+    /// logged rather than pushed -- and, ahead of that check, a totally-empty
+    /// current read next to a nonempty known baseline is always skipped
+    /// regardless of batch size. This exists because a diff-based "clean"
     /// reconcile with no floor once wiped a real user's entire remote
     /// collection when the local library briefly (and wrongly) read back
     /// near-empty -- see the Kodi addon incident and trakt-list's
@@ -278,6 +280,22 @@ public class SyncPayloadBuilder
                     "MDBList Sync: {Category} removal skipped ({Count} items) - this trigger doesn't allow removals",
                     category,
                     toRemove.Count);
+            }
+            else if (currentItems.Count == 0)
+            {
+                // Extra guard ahead of the magnitude check: a totally-empty
+                // current read next to a nonempty known baseline is never a
+                // real mass unwatch/unrate/uncollect, regardless of how few
+                // items that would remove -- the fixed RemovalMinBatch floor
+                // alone can't catch this for a small known-item count. Same
+                // handling as a fetch failure: hold every known item and
+                // re-diff fresh next run. See removal_safety_pattern.md.
+                skippedRemove = toRemove.Count;
+                _logger.LogWarning(
+                    "MDBList Sync: {Category} removal skipped - current-items read is empty while {KnownCount} known items are on file; "
+                        + "treating as an unreliable read rather than a real removal",
+                    category,
+                    known.Count);
             }
             else
             {
