@@ -125,7 +125,9 @@ public class MDBListController : ControllerBase
     [HttpPost("Users/{userId}/Sync")]
     public async Task<ActionResult<SyncStatusResult>> Sync(Guid userId, CancellationToken cancellationToken)
     {
-        await _orchestrator.RunAsync(userId, cancellationToken).ConfigureAwait(false);
+        // allowRemovals: true -- explicit user intent, foreground, user is
+        // watching -- same trust level as the 24h timer.
+        await _orchestrator.RunAsync(userId, allowRemovals: true, cancellationToken).ConfigureAwait(false);
         return Ok(await BuildStatusAsync(userId, cancellationToken).ConfigureAwait(false));
     }
 

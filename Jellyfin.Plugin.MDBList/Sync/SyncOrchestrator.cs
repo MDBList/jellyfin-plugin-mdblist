@@ -10,6 +10,7 @@ using Jellyfin.Plugin.MDBList.Api.Models;
 using Jellyfin.Plugin.MDBList.Configuration;
 using Jellyfin.Plugin.MDBList.Library;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.MDBList.Sync;
@@ -31,13 +32,17 @@ namespace Jellyfin.Plugin.MDBList.Sync;
 /// </summary>
 public sealed class SyncOrchestrator : IDisposable
 {
+    private const string LibraryScanTaskKey = "RefreshLibrary";
+
     private static readonly string[] WatchedActivityKeys = ["watched_at", "season_watched_at", "episode_watched_at"];
     private static readonly string[] RatingActivityKeys = ["rated_at"];
+    private static readonly SyncCategory[] AllCategories = [SyncCategory.Watched, SyncCategory.Ratings, SyncCategory.Collection];
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly IUserManager _userManager;
     private readonly ILibraryManager _libraryManager;
     private readonly IUserDataManager _userDataManager;
+    private readonly ITaskManager _taskManager;
     private readonly OAuthService _oauthService;
     private readonly MDBListApiClient _apiClient;
     private readonly SyncStateStore _stateStore;
@@ -52,6 +57,7 @@ public sealed class SyncOrchestrator : IDisposable
     /// <param name="userManager">Instance of the <see cref="IUserManager"/> interface.</param>
     /// <param name="libraryManager">Instance of the <see cref="ILibraryManager"/> interface.</param>
     /// <param name="userDataManager">Instance of the <see cref="IUserDataManager"/> interface.</param>
+    /// <param name="taskManager">Instance of the <see cref="ITaskManager"/> interface.</param>
     /// <param name="oauthService">Instance of the <see cref="OAuthService"/>.</param>
     /// <param name="apiClient">Instance of the <see cref="MDBListApiClient"/>.</param>
     /// <param name="stateStore">Instance of the <see cref="SyncStateStore"/>.</param>
@@ -63,6 +69,7 @@ public sealed class SyncOrchestrator : IDisposable
         IUserManager userManager,
         ILibraryManager libraryManager,
         IUserDataManager userDataManager,
+        ITaskManager taskManager,
         OAuthService oauthService,
         MDBListApiClient apiClient,
         SyncStateStore stateStore,
@@ -74,6 +81,7 @@ public sealed class SyncOrchestrator : IDisposable
         _userManager = userManager;
         _libraryManager = libraryManager;
         _userDataManager = userDataManager;
+        _taskManager = taskManager;
         _oauthService = oauthService;
         _apiClient = apiClient;
         _stateStore = stateStore;
@@ -106,9 +114,17 @@ public sealed class SyncOrchestrator : IDisposable
     /// than queued.
     /// </summary>
     /// <param name="userId">The linked Jellyfin user to sync.</param>
+    /// <param name="allowRemovals">
+    /// Gates whether this run may push removals at all -- required, not
+    /// defaulted, so every call site has to consciously pick a trust tier.
+    /// Only a deliberate periodic timer or manual "Sync now" should pass
+    /// true; anything triggered by a library change/scan event should pass
+    /// false. See <see cref="SyncPayloadBuilder.DiffAndReconcileAsync"/> and
+    /// removal_safety_pattern.md.
+    /// </param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>True if a run actually executed.</returns>
-    public async Task<bool> RunAsync(Guid userId, CancellationToken cancellationToken)
+    public async Task<bool> RunAsync(Guid userId, bool allowRemovals, CancellationToken cancellationToken)
     {
         using var handle = TryLock();
         if (handle is null)
@@ -123,7 +139,7 @@ public sealed class SyncOrchestrator : IDisposable
             return false;
         }
 
-        return await RunForUserAsync(linked.Value.User, linked.Value.Config, cancellationToken).ConfigureAwait(false);
+        return await RunForUserAsync(linked.Value.User, linked.Value.Config, allowRemovals, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -131,9 +147,10 @@ public sealed class SyncOrchestrator : IDisposable
     /// hold of the sync lock -- the scheduled-task equivalent of calling
     /// <see cref="RunAsync"/> once per user.
     /// </summary>
+    /// <param name="allowRemovals">See <see cref="RunAsync"/>.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>True if at least one user's run actually executed.</returns>
-    public async Task<bool> RunAllLinkedUsersAsync(CancellationToken cancellationToken)
+    public async Task<bool> RunAllLinkedUsersAsync(bool allowRemovals, CancellationToken cancellationToken)
     {
         using var handle = TryLock();
         if (handle is null)
@@ -151,13 +168,13 @@ public sealed class SyncOrchestrator : IDisposable
                 continue;
             }
 
-            anyRan |= await RunForUserAsync(user, config, cancellationToken).ConfigureAwait(false);
+            anyRan |= await RunForUserAsync(user, config, allowRemovals, cancellationToken).ConfigureAwait(false);
         }
 
         return anyRan;
     }
 
-    private async Task<bool> RunForUserAsync(User user, UserSyncConfig config, CancellationToken cancellationToken)
+    private async Task<bool> RunForUserAsync(User user, UserSyncConfig config, bool allowRemovals, CancellationToken cancellationToken)
     {
         var accessToken = await _oauthService.EnsureValidTokenAsync(user.Id, cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrEmpty(accessToken))
@@ -172,19 +189,51 @@ public sealed class SyncOrchestrator : IDisposable
             // diff-based reconciliation treat an incomplete snapshot as "the
             // library is empty" and push bulk removals.
             var snapshot = LibrarySnapshot.Build(_libraryManager, _userDataManager, user);
+
+            // Companion guard to the removal circuit-breaker in
+            // SyncPayloadBuilder: a successful-but-empty library query isn't
+            // an MDBListApiException, so it isn't caught by the catch below
+            // -- but a totally empty library next to remembered known-items
+            // is never a real user action. Treat it the same as a fetch
+            // failure: abort the whole run rather than let any category
+            // (including pull(), which the circuit-breaker doesn't cover)
+            // read it as authoritative.
+            var hasLocalMedia = snapshot.Movies.Count > 0 || snapshot.Episodes.Count > 0;
+            if (!hasLocalMedia && await AnyCategoryHasKnownItemsAsync(user.Id, cancellationToken).ConfigureAwait(false))
+            {
+                _logger.LogError(
+                    "MDBList Sync: run aborted - library snapshot is empty but remote state is not; "
+                        + "treating as an unreliable read rather than a real removal");
+                var abortSummary = "sync skipped - local library looks empty";
+                await _stateStore.SetLastRunSummaryAsync(user.Id, abortSummary, cancellationToken).ConfigureAwait(false);
+                return false;
+            }
+
+            // A library scan mid-flight can make a query legitimately,
+            // successfully return an incomplete result -- downgrade to
+            // read+add-only for this run rather than let a transient
+            // mount/scan hiccup be read as a real mass removal.
+            var scanRunning = _taskManager.ScheduledTasks.Any(t => t.ScheduledTask.Key == LibraryScanTaskKey && t.State == TaskState.Running);
+            var effectiveAllowRemovals = allowRemovals && !scanRunning;
+            if (allowRemovals && scanRunning)
+            {
+                _logger.LogInformation("MDBList Sync: library scan in progress -- this run will not push removals");
+            }
+
             var activities = await _apiClient.FetchLastActivitiesAsync(accessToken, cancellationToken).ConfigureAwait(false);
 
             var watchedSummary = "watched skipped";
             if (config.WatchedEnabled)
             {
-                var watchedPush = await _watchedSync.PushAsync(user.Id, accessToken, snapshot, cancellationToken).ConfigureAwait(false);
+                var watchedPush = await _watchedSync.PushAsync(user.Id, accessToken, snapshot, effectiveAllowRemovals, cancellationToken).ConfigureAwait(false);
                 var watchedPull = await _watchedSync.PullAsync(user.Id, accessToken, user, snapshot, activities.ServerTime, cancellationToken)
                     .ConfigureAwait(false);
                 watchedSummary = string.Format(
                     CultureInfo.InvariantCulture,
-                    "watched push +{0}/-{1} pull {2} ({3})",
+                    "watched push +{0}/-{1}{2} pull {3} ({4})",
                     watchedPush.PushedAdd,
                     watchedPush.PushedRemove,
+                    watchedPush.SkippedRemove > 0 ? $" ({watchedPush.SkippedRemove} skipped)" : string.Empty,
                     watchedPull.PulledApplied,
                     watchedPull.Mode);
             }
@@ -192,14 +241,15 @@ public sealed class SyncOrchestrator : IDisposable
             var ratingsSummary = "ratings skipped";
             if (config.RatingsEnabled)
             {
-                var ratingsPush = await _ratingsSync.PushAsync(user.Id, accessToken, snapshot, cancellationToken).ConfigureAwait(false);
+                var ratingsPush = await _ratingsSync.PushAsync(user.Id, accessToken, snapshot, effectiveAllowRemovals, cancellationToken).ConfigureAwait(false);
                 var ratingsPull = await _ratingsSync.PullAsync(user.Id, accessToken, user, snapshot, activities.ServerTime, cancellationToken)
                     .ConfigureAwait(false);
                 ratingsSummary = string.Format(
                     CultureInfo.InvariantCulture,
-                    "ratings push +{0}/-{1} pull {2} ({3})",
+                    "ratings push +{0}/-{1}{2} pull {3} ({4})",
                     ratingsPush.PushedAdd,
                     ratingsPush.PushedRemove,
+                    ratingsPush.SkippedRemove > 0 ? $" ({ratingsPush.SkippedRemove} skipped)" : string.Empty,
                     ratingsPull.PulledApplied,
                     ratingsPull.Mode);
             }
@@ -207,12 +257,13 @@ public sealed class SyncOrchestrator : IDisposable
             var collectionSummary = "collection skipped";
             if (config.CollectionEnabled)
             {
-                var collectionPush = await _collectionSync.PushAsync(user.Id, accessToken, snapshot, cancellationToken).ConfigureAwait(false);
+                var collectionPush = await _collectionSync.PushAsync(user.Id, accessToken, snapshot, effectiveAllowRemovals, cancellationToken).ConfigureAwait(false);
                 collectionSummary = string.Format(
                     CultureInfo.InvariantCulture,
-                    "collection push +{0}/-{1}",
+                    "collection push +{0}/-{1}{2}",
                     collectionPush.PushedAdd,
-                    collectionPush.PushedRemove);
+                    collectionPush.PushedRemove,
+                    collectionPush.SkippedRemove > 0 ? $" ({collectionPush.SkippedRemove} skipped)" : string.Empty);
             }
 
             var summary = $"{watchedSummary}, {ratingsSummary}, {collectionSummary}";
@@ -227,6 +278,24 @@ public sealed class SyncOrchestrator : IDisposable
             await _stateStore.SetLastRunSummaryAsync(user.Id, $"run failed: {ex.Message}", cancellationToken).ConfigureAwait(false);
             return false;
         }
+    }
+
+    /// <summary>
+    /// True if any of the three sync categories carries a known-items
+    /// baseline for this user -- used by the empty-snapshot abort guard.
+    /// </summary>
+    private async Task<bool> AnyCategoryHasKnownItemsAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        foreach (var category in AllCategories)
+        {
+            var known = await _stateStore.GetKnownItemsAsync(userId, category, cancellationToken).ConfigureAwait(false);
+            if (known.Count > 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

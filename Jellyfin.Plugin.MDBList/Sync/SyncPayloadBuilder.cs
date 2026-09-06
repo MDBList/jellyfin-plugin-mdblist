@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.MDBList.Api;
 using Jellyfin.Plugin.MDBList.Library;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.MDBList.Sync;
 
@@ -20,6 +21,18 @@ public class SyncPayloadBuilder
 {
     private const int BatchSize = 100;
 
+    /// <summary>
+    /// Magnitude circuit-breaker on removals -- see
+    /// <see cref="DiffAndReconcileAsync"/>. Fixed, not user-configurable:
+    /// there's a single correct answer here, not a per-user preference.
+    /// Same shape/defaults as the Kodi addon and trakt-list's removal
+    /// safety pattern, for ecosystem-wide consistency.
+    /// </summary>
+    private const double RemovalMaxFraction = 0.30;
+
+    /// <summary>Trip threshold = max(this, knownCount * RemovalMaxFraction).</summary>
+    private const int RemovalMinBatch = 15;
+
     private static readonly JsonSerializerOptions IdsSerializerOptions = new()
     {
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
@@ -27,16 +40,19 @@ public class SyncPayloadBuilder
 
     private readonly MDBListApiClient _apiClient;
     private readonly SyncStateStore _stateStore;
+    private readonly ILogger<SyncPayloadBuilder> _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="SyncPayloadBuilder"/> class.
     /// </summary>
     /// <param name="apiClient">Instance of the <see cref="MDBListApiClient"/>.</param>
     /// <param name="stateStore">Instance of the <see cref="SyncStateStore"/>.</param>
-    public SyncPayloadBuilder(MDBListApiClient apiClient, SyncStateStore stateStore)
+    /// <param name="logger">Instance of the <see cref="ILogger{SyncPayloadBuilder}"/> interface.</param>
+    public SyncPayloadBuilder(MDBListApiClient apiClient, SyncStateStore stateStore, ILogger<SyncPayloadBuilder> logger)
     {
         _apiClient = apiClient;
         _stateStore = stateStore;
+        _logger = logger;
     }
 
     /// <summary>
@@ -198,13 +214,21 @@ public class SyncPayloadBuilder
     /// </param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <param name="allowRemovals">
-    /// When false, skip computing/pushing removals entirely, so items that
-    /// are only transiently invisible (e.g. a network mount outage) aren't
-    /// recorded as gone and don't get diffed as a mass removal on a later
-    /// run. Used by collection sync's safety guard; defaults to true (the
-    /// every-other-category behavior).
+    /// Gates whether this call may push removals at all -- defaults to
+    /// false so a call site that forgets to think about it stays safe;
+    /// only a deliberate periodic timer, manual "Sync now", or an explicit
+    /// human-confirmed override should pass true (see SyncOrchestrator).
+    /// Even when true, a removal batch larger than
+    /// max(RemovalMinBatch, knownCount * RemovalMaxFraction) is skipped and
+    /// logged rather than pushed. This exists because a diff-based "clean"
+    /// reconcile with no floor once wiped a real user's entire remote
+    /// collection when the local library briefly (and wrongly) read back
+    /// near-empty -- see the Kodi addon incident and trakt-list's
+    /// removal_safety_pattern.md. A skipped batch isn't persisted anywhere
+    /// -- it's simply re-diffed from scratch next run, so once the library
+    /// reads back correctly the very next qualifying run pushes it normally.
     /// </param>
-    /// <returns>How many items were pushed as added/removed.</returns>
+    /// <returns>How many items were pushed as added/removed/skipped.</returns>
     public async Task<PushResult> DiffAndReconcileAsync(
         Guid userId,
         SyncCategory category,
@@ -213,7 +237,7 @@ public class SyncPayloadBuilder
         Func<IReadOnlyCollection<KnownSyncItem>, Task> pushRemove,
         Func<KnownSyncItem, KnownSyncItem, bool>? valueChanged,
         CancellationToken cancellationToken,
-        bool allowRemovals = true)
+        bool allowRemovals = false)
     {
         var known = await _stateStore.GetKnownItemsAsync(userId, category, cancellationToken).ConfigureAwait(false);
 
@@ -227,14 +251,11 @@ public class SyncPayloadBuilder
         }
 
         var toRemove = new List<KnownSyncItem>();
-        if (allowRemovals)
+        foreach (var (key, item) in known)
         {
-            foreach (var (key, item) in known)
+            if (!currentItems.ContainsKey(key))
             {
-                if (!currentItems.ContainsKey(key))
-                {
-                    toRemove.Add(item);
-                }
+                toRemove.Add(item);
             }
         }
 
@@ -243,12 +264,46 @@ public class SyncPayloadBuilder
             await pushAdd(toAdd).ConfigureAwait(false);
         }
 
+        var pushedRemove = 0;
+        var skippedRemove = 0;
         if (toRemove.Count > 0)
         {
-            await pushRemove(toRemove).ConfigureAwait(false);
+            if (!allowRemovals)
+            {
+                // Routine, not suspicious -- this call site's trigger
+                // (library-change debounce, service start) simply never
+                // removes, by policy.
+                skippedRemove = toRemove.Count;
+                _logger.LogDebug(
+                    "MDBList Sync: {Category} removal skipped ({Count} items) - this trigger doesn't allow removals",
+                    category,
+                    toRemove.Count);
+            }
+            else
+            {
+                var threshold = Math.Max(RemovalMinBatch, (int)(known.Count * RemovalMaxFraction));
+                if (toRemove.Count <= threshold)
+                {
+                    await pushRemove(toRemove).ConfigureAwait(false);
+                    pushedRemove = toRemove.Count;
+                }
+                else
+                {
+                    // The circuit breaker actually tripped -- this is the
+                    // notable case, worth a louder log level.
+                    skippedRemove = toRemove.Count;
+                    _logger.LogWarning(
+                        "MDBList Sync: {Category} removal skipped - {Count} of {KnownCount} known items would be removed "
+                            + "(threshold {Threshold}); local library may be incomplete",
+                        category,
+                        toRemove.Count,
+                        known.Count,
+                        threshold);
+                }
+            }
         }
 
-        return new PushResult { PushedAdd = toAdd.Count, PushedRemove = toRemove.Count };
+        return new PushResult { PushedAdd = toAdd.Count, PushedRemove = pushedRemove, SkippedRemove = skippedRemove };
     }
 
     /// <summary>

@@ -14,4 +14,11 @@ public class PushResult
     /// Gets or sets how many items were pushed as removed.
     /// </summary>
     public int PushedRemove { get; set; }
+
+    /// <summary>
+    /// Gets or sets how many would-be removals were skipped -- either the
+    /// trigger doesn't allow removals, or the batch tripped the magnitude
+    /// circuit-breaker. See <see cref="SyncPayloadBuilder.DiffAndReconcileAsync"/>.
+    /// </summary>
+    public int SkippedRemove { get; set; }
 }

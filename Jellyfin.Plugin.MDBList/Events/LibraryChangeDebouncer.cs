@@ -79,7 +79,13 @@ public sealed class LibraryChangeDebouncer : IDisposable
             {
                 try
                 {
-                    await _orchestrator.RunAsync(config.JellyfinUserId, CancellationToken.None).ConfigureAwait(false);
+                    // allowRemovals: false -- a scan/library-change event is
+                    // precisely the incident vector this guards against (a
+                    // network mount or scan-in-progress state can make
+                    // items legitimately, transiently disappear from a
+                    // query); removals still wait for the 24h timer or
+                    // manual "Sync now".
+                    await _orchestrator.RunAsync(config.JellyfinUserId, allowRemovals: false, CancellationToken.None).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {

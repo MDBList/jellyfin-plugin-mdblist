@@ -70,9 +70,10 @@ public class RatingsSync
     /// <param name="userId">The Jellyfin user.</param>
     /// <param name="accessToken">A valid MDBList access token.</param>
     /// <param name="snapshot">The current library snapshot.</param>
+    /// <param name="allowRemovals">See <see cref="SyncPayloadBuilder.DiffAndReconcileAsync"/>.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>How many items were pushed as added/removed.</returns>
-    public async Task<PushResult> PushAsync(Guid userId, string accessToken, LibrarySnapshot snapshot, CancellationToken cancellationToken)
+    /// <returns>How many items were pushed as added/removed/skipped.</returns>
+    public async Task<PushResult> PushAsync(Guid userId, string accessToken, LibrarySnapshot snapshot, bool allowRemovals, CancellationToken cancellationToken)
     {
         var current = CurrentRatedItems(snapshot);
 
@@ -83,7 +84,8 @@ public class RatingsSync
             items => _payloadBuilder.PushItemsAsync(userId, Category, accessToken, Endpoint, FieldName, items, GetRatingValue, cancellationToken),
             items => _payloadBuilder.PushItemsRemoveAsync(userId, Category, accessToken, RemoveEndpoint, items, cancellationToken),
             valueChanged: (known, item) => known.Rating != item.Rating,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            allowRemovals).ConfigureAwait(false);
     }
 
     /// <summary>

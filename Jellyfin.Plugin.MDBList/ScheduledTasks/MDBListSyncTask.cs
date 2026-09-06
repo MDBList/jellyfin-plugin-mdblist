@@ -10,10 +10,12 @@ namespace Jellyfin.Plugin.MDBList.ScheduledTasks;
 /// <summary>
 /// Full push-and-pull reconciliation for every enabled category -- the
 /// periodic backstop that covers anything the live listener and the cheap
-/// activity poll missed (e.g. while Jellyfin was down), and the same
-/// operation the config page's "Sync now" button and a post-library-scan
-/// trigger both call into. Port of sync_orchestrator.py's run(), wired to
-/// Jellyfin's own scheduled-task engine instead of a hand-rolled timer.
+/// activity poll missed (e.g. while Jellyfin was down). The config page's
+/// "Sync now" button calls the same <see cref="SyncOrchestrator"/> operation
+/// with the same trust level; a post-library-scan trigger calls it too but
+/// with removals disabled -- see <see cref="SyncOrchestrator.RunAsync"/>.
+/// Port of sync_orchestrator.py's run(), wired to Jellyfin's own
+/// scheduled-task engine instead of a hand-rolled timer.
 /// </summary>
 public class MDBListSyncTask : IScheduledTask
 {
@@ -56,7 +58,10 @@ public class MDBListSyncTask : IScheduledTask
     /// <inheritdoc />
     public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
     {
-        await _orchestrator.RunAllLinkedUsersAsync(cancellationToken).ConfigureAwait(false);
+        // allowRemovals: true -- the deliberate 24h reconciliation backstop,
+        // trusted to actually remove things from MDBList (still subject to
+        // SyncPayloadBuilder's magnitude circuit-breaker).
+        await _orchestrator.RunAllLinkedUsersAsync(allowRemovals: true, cancellationToken).ConfigureAwait(false);
         progress.Report(100);
     }
 }
