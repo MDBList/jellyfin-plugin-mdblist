@@ -91,6 +91,7 @@ public class LibrarySnapshot
             IncludeItemTypes = [BaseItemKind.Movie],
             Recursive = true,
             IsVirtualItem = false,
+            CollapseBoxSetItems = false,
         };
 
         foreach (var item in libraryManager.GetItemList(query))
