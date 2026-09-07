@@ -1,7 +1,7 @@
 ---
 name: "MDBList"
 guid: "cbca79d7-ecde-4030-833c-3862f3c3a737"
-version: "1.0.0.6"
+version: "1.0.0.7"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 overview: "Two-way sync of watched status and ratings, plus collection sync, against MDBList"
@@ -15,6 +15,16 @@ owner: "linaspurinis"
 artifacts:
 - "Jellyfin.Plugin.MDBList.dll"
 changelog: >
+  1.0.0.7: Fixes a rare failure mode where a sync running right after
+  Jellyfin starts, during a library scan, or against a temporarily
+  unreadable library could be misread as "everything was removed" and
+  push that as a mass removal to MDBList (or, in the reverse direction,
+  mark a batch of items unwatched locally). Removals are now only ever
+  applied on a deliberate sync (the 24h scheduled sync or manual "Sync
+  now"), and a suspiciously empty or oversized removal batch is held and
+  retried on the next sync instead of applied.
+
+
   1.0.0.6: Fixes hitting MDBList's rate limit on a large first sync --
   requests are now paced under the server's short-window write budget,
   and a 429 is retried using the server's own requested wait instead of
