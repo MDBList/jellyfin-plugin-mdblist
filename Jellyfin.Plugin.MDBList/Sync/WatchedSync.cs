@@ -151,26 +151,36 @@ public class WatchedSync
     /// the device's own clock, which can drift and under-cover the next
     /// incremental window.
     /// </param>
+    /// <param name="trusted">
+    /// Forwarded to the full-reconcile removal guard -- see
+    /// <see cref="ShouldHoldPullRemovals"/> and removal_safety_pattern.md's
+    /// Trusted Runs section. Defaults to false so a call site that forgets
+    /// to think about it stays safe; only the caller's own trusted-removal
+    /// signal (the same one gating push) should pass true.
+    /// <see cref="PullIncrementalAsync"/> doesn't need this: it applies
+    /// explicit per-item journal events, not a "known minus current-read"
+    /// diff, so it isn't the failure mode this pattern guards against.
+    /// </param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>How many items were actually changed, and which mode ran.</returns>
-    public async Task<PullResult> PullAsync(Guid userId, string accessToken, User user, LibrarySnapshot snapshot, string? serverTime, CancellationToken cancellationToken)
+    public async Task<PullResult> PullAsync(Guid userId, string accessToken, User user, LibrarySnapshot snapshot, string? serverTime, bool trusted, CancellationToken cancellationToken)
     {
         var since = await _stateStore.GetSyncedAtAsync(userId, Category, cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrEmpty(since))
         {
-            return await PullFullAsync(userId, accessToken, user, snapshot, serverTime, cancellationToken).ConfigureAwait(false);
+            return await PullFullAsync(userId, accessToken, user, snapshot, serverTime, trusted, cancellationToken).ConfigureAwait(false);
         }
 
         var journal = await _apiClient.FetchJournalAsync(accessToken, since, JournalPageSize, cancellationToken).ConfigureAwait(false);
         if (journal.RequiresFullSync)
         {
-            return await PullFullAsync(userId, accessToken, user, snapshot, serverTime, cancellationToken).ConfigureAwait(false);
+            return await PullFullAsync(userId, accessToken, user, snapshot, serverTime, trusted, cancellationToken).ConfigureAwait(false);
         }
 
         return await PullIncrementalAsync(userId, user, journal.Entries, snapshot, serverTime, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<PullResult> PullFullAsync(Guid userId, string accessToken, User user, LibrarySnapshot snapshot, string? serverTime, CancellationToken cancellationToken)
+    private async Task<PullResult> PullFullAsync(Guid userId, string accessToken, User user, LibrarySnapshot snapshot, string? serverTime, bool trusted, CancellationToken cancellationToken)
     {
         // extended=null (full, not ids_only): ids_only only exposes a
         // movie's tmdb id (and an episode's parent show's tmdb id). A local
@@ -232,8 +242,9 @@ public class WatchedSync
         // DiffAndReconcileAsync guards against on push, just mirrored to the
         // opposite direction: a successful-but-degraded /sync/watched
         // response would otherwise read as "everything was unwatched
-        // remotely" and wipe local state. Same two guards, same constants --
-        // see removal_safety_pattern.md.
+        // remotely" and wipe local state. Same three guards (trust,
+        // empty-vs-threshold, magnitude), same constants -- see
+        // removal_safety_pattern.md.
         var locallyWatched = new List<(SnapshotItem Record, string Key)>();
         foreach (var movie in snapshot.Movies)
         {
@@ -255,7 +266,7 @@ public class WatchedSync
 
         var candidateRemovals = locallyWatched.Where(w => !matchedKeys.Contains(w.Key)).ToList();
         var holdRemovals = candidateRemovals.Count > 0
-            && ShouldHoldPullRemovals(data.Movies.Count + data.Episodes.Count, candidateRemovals.Count, locallyWatched.Count);
+            && ShouldHoldPullRemovals(data.Movies.Count + data.Episodes.Count, candidateRemovals.Count, locallyWatched.Count, trusted);
 
         if (candidateRemovals.Count > 0 && !holdRemovals)
         {
@@ -291,24 +302,39 @@ public class WatchedSync
 
     /// <summary>
     /// Same shape as <see cref="SyncPayloadBuilder.DiffAndReconcileAsync"/>'s
-    /// removal guard, applied to the pull-direction full reconcile: a
-    /// totally-empty remote read next to known-watched items is always held,
-    /// and otherwise a batch larger than
+    /// removal guard, applied to the pull-direction full reconcile: held
+    /// when the trigger isn't trusted for removals, when a totally-empty
+    /// remote read sits next to a known-watched baseline bigger than the
+    /// threshold, or when the removal batch itself is larger than
     /// max(<see cref="SyncPayloadBuilder.RemovalMinBatch"/>, knownCount *
-    /// <see cref="SyncPayloadBuilder.RemovalMaxFraction"/>) is held too.
+    /// <see cref="SyncPayloadBuilder.RemovalMaxFraction"/>). The empty-read
+    /// check is tied to the threshold rather than an absolute veto, same
+    /// reasoning as DiffAndReconcileAsync -- a user whose whole watched
+    /// library is smaller than the threshold must still be able to clear it
+    /// completely on a trusted run.
     /// </summary>
-    private bool ShouldHoldPullRemovals(int remoteCount, int candidateCount, int knownCount)
+    private bool ShouldHoldPullRemovals(int remoteCount, int candidateCount, int knownCount, bool trusted)
     {
-        if (remoteCount == 0)
+        var threshold = Math.Max(SyncPayloadBuilder.RemovalMinBatch, (int)(knownCount * SyncPayloadBuilder.RemovalMaxFraction));
+
+        if (!trusted)
         {
-            _logger.LogWarning(
-                "MDBList Sync: watched pull removal held - remote full list came back empty while {KnownCount} items are locally "
-                    + "watched; treating as an unreliable read rather than a real removal",
-                knownCount);
+            _logger.LogDebug(
+                "MDBList Sync: watched pull removal held ({Count} items) - this trigger doesn't allow removals",
+                candidateCount);
             return true;
         }
 
-        var threshold = Math.Max(SyncPayloadBuilder.RemovalMinBatch, (int)(knownCount * SyncPayloadBuilder.RemovalMaxFraction));
+        if (remoteCount == 0 && knownCount > threshold)
+        {
+            _logger.LogWarning(
+                "MDBList Sync: watched pull removal held - remote full list came back empty while {KnownCount} items are locally "
+                    + "watched (threshold {Threshold}); treating as an unreliable read rather than a real removal",
+                knownCount,
+                threshold);
+            return true;
+        }
+
         if (candidateCount > threshold)
         {
             _logger.LogWarning(

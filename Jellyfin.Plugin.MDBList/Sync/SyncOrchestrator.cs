@@ -226,7 +226,7 @@ public sealed class SyncOrchestrator : IDisposable
             if (config.WatchedEnabled)
             {
                 var watchedPush = await _watchedSync.PushAsync(user.Id, accessToken, snapshot, effectiveAllowRemovals, cancellationToken).ConfigureAwait(false);
-                var watchedPull = await _watchedSync.PullAsync(user.Id, accessToken, user, snapshot, activities.ServerTime, cancellationToken)
+                var watchedPull = await _watchedSync.PullAsync(user.Id, accessToken, user, snapshot, activities.ServerTime, effectiveAllowRemovals, cancellationToken)
                     .ConfigureAwait(false);
                 watchedSummary = string.Format(
                     CultureInfo.InvariantCulture,
@@ -405,7 +405,11 @@ public sealed class SyncOrchestrator : IDisposable
         {
             if (watchedChanged)
             {
-                var watchedPull = await _watchedSync.PullAsync(user.Id, accessToken, user, snapshot, activities.ServerTime, cancellationToken)
+                // trusted: false -- this is the frequent activity poll, not
+                // the deliberate reconciliation backstop -- per
+                // removal_safety_pattern.md's Trusted Runs section it must
+                // never remove, only apply adds/updates.
+                var watchedPull = await _watchedSync.PullAsync(user.Id, accessToken, user, snapshot, activities.ServerTime, trusted: false, cancellationToken)
                     .ConfigureAwait(false);
                 summaries.Add(string.Format(
                     CultureInfo.InvariantCulture,

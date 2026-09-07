@@ -223,8 +223,10 @@ public class SyncPayloadBuilder
     /// Even when true, a removal batch larger than
     /// max(RemovalMinBatch, knownCount * RemovalMaxFraction) is skipped and
     /// logged rather than pushed -- and, ahead of that check, a totally-empty
-    /// current read next to a nonempty known baseline is always skipped
-    /// regardless of batch size. This exists because a diff-based "clean"
+    /// current read next to a known baseline bigger than that same threshold
+    /// is always skipped regardless of batch size. Tied to the threshold
+    /// rather than an absolute veto so a user with a small category can
+    /// still clear it completely on a trusted run. This exists because a diff-based "clean"
     /// reconcile with no floor once wiped a real user's entire remote
     /// collection when the local library briefly (and wrongly) read back
     /// near-empty -- see the Kodi addon incident and trakt-list's
@@ -272,6 +274,7 @@ public class SyncPayloadBuilder
         var skippedRemove = 0;
         if (toRemove.Count > 0)
         {
+            var threshold = Math.Max(RemovalMinBatch, (int)(known.Count * RemovalMaxFraction));
             if (!allowRemovals)
             {
                 // Routine, not suspicious -- this call site's trigger
@@ -283,43 +286,42 @@ public class SyncPayloadBuilder
                     category,
                     toRemove.Count);
             }
-            else if (currentItems.Count == 0)
+            else if (currentItems.Count == 0 && known.Count > threshold)
             {
-                // Extra guard ahead of the magnitude check: a totally-empty
-                // current read next to a nonempty known baseline is never a
-                // real mass unwatch/unrate/uncollect, regardless of how few
-                // items that would remove -- the fixed RemovalMinBatch floor
-                // alone can't catch this for a small known-item count. Same
-                // handling as a fetch failure: hold every known item and
-                // re-diff fresh next run. See removal_safety_pattern.md.
+                // Extra guard ahead of the magnitude check below, tied to
+                // the same threshold rather than an absolute veto: a
+                // totally-empty current read next to a known baseline
+                // bigger than the threshold is never a real mass
+                // unwatch/unrate/uncollect, but a user whose whole category
+                // is smaller than the threshold must still be able to
+                // clear it completely on a trusted run. Same handling as a
+                // fetch failure: hold every known item and re-diff fresh
+                // next run. See removal_safety_pattern.md.
                 skippedRemove = toRemove.Count;
                 _logger.LogWarning(
-                    "MDBList Sync: {Category} removal skipped - current-items read is empty while {KnownCount} known items are on file; "
-                        + "treating as an unreliable read rather than a real removal",
+                    "MDBList Sync: {Category} removal skipped - current-items read is empty while {KnownCount} known items are on file "
+                        + "(threshold {Threshold}); treating as an unreliable read rather than a real removal",
                     category,
-                    known.Count);
+                    known.Count,
+                    threshold);
+            }
+            else if (toRemove.Count > threshold)
+            {
+                // The circuit breaker actually tripped -- this is the
+                // notable case, worth a louder log level.
+                skippedRemove = toRemove.Count;
+                _logger.LogWarning(
+                    "MDBList Sync: {Category} removal skipped - {Count} of {KnownCount} known items would be removed "
+                        + "(threshold {Threshold}); local library may be incomplete",
+                    category,
+                    toRemove.Count,
+                    known.Count,
+                    threshold);
             }
             else
             {
-                var threshold = Math.Max(RemovalMinBatch, (int)(known.Count * RemovalMaxFraction));
-                if (toRemove.Count <= threshold)
-                {
-                    await pushRemove(toRemove).ConfigureAwait(false);
-                    pushedRemove = toRemove.Count;
-                }
-                else
-                {
-                    // The circuit breaker actually tripped -- this is the
-                    // notable case, worth a louder log level.
-                    skippedRemove = toRemove.Count;
-                    _logger.LogWarning(
-                        "MDBList Sync: {Category} removal skipped - {Count} of {KnownCount} known items would be removed "
-                            + "(threshold {Threshold}); local library may be incomplete",
-                        category,
-                        toRemove.Count,
-                        known.Count,
-                        threshold);
-                }
+                await pushRemove(toRemove).ConfigureAwait(false);
+                pushedRemove = toRemove.Count;
             }
         }
 
