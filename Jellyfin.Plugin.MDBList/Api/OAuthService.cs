@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.MDBList.Api.Models;
 using Jellyfin.Plugin.MDBList.Configuration;
+using Jellyfin.Plugin.MDBList.Sync;
 using MediaBrowser.Common.Net;
 using Microsoft.Extensions.Logging;
 
@@ -31,6 +32,7 @@ public class OAuthService : IDisposable
 
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly MDBListApiClient _apiClient;
+    private readonly SyncStateStore _stateStore;
     private readonly ILogger<OAuthService> _logger;
 
     /// <summary>
@@ -38,11 +40,13 @@ public class OAuthService : IDisposable
     /// </summary>
     /// <param name="httpClientFactory">Instance of the <see cref="IHttpClientFactory"/> interface.</param>
     /// <param name="apiClient">Instance of the <see cref="MDBListApiClient"/>.</param>
+    /// <param name="stateStore">Instance of the <see cref="SyncStateStore"/>.</param>
     /// <param name="logger">Instance of the <see cref="ILogger{OAuthService}"/> interface.</param>
-    public OAuthService(IHttpClientFactory httpClientFactory, MDBListApiClient apiClient, ILogger<OAuthService> logger)
+    public OAuthService(IHttpClientFactory httpClientFactory, MDBListApiClient apiClient, SyncStateStore stateStore, ILogger<OAuthService> logger)
     {
         _httpClientFactory = httpClientFactory;
         _apiClient = apiClient;
+        _stateStore = stateStore;
         _logger = logger;
     }
 
@@ -220,6 +224,12 @@ public class OAuthService : IDisposable
         {
             _configLock.Release();
         }
+
+        // A reconnect (same or different MDBList account) must not resume
+        // against the previous account's cursors/known-items -- wipe this
+        // user's sync bookkeeping so the next run is a clean full resync.
+        await _stateStore.ResetUserAsync(jellyfinUserId, cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation("MDBList Sync: cleared sync state for user {UserId} on disconnect", jellyfinUserId);
     }
 
     /// <summary>
