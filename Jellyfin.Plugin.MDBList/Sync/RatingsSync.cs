@@ -12,6 +12,7 @@ using Jellyfin.Plugin.MDBList.Library;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.MDBList.Sync;
 
@@ -41,6 +42,7 @@ public class RatingsSync
     private readonly MDBListApiClient _apiClient;
     private readonly ILibraryManager _libraryManager;
     private readonly IUserDataManager _userDataManager;
+    private readonly ILogger<RatingsSync> _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="RatingsSync"/> class.
@@ -50,18 +52,21 @@ public class RatingsSync
     /// <param name="apiClient">Instance of the <see cref="MDBListApiClient"/>.</param>
     /// <param name="libraryManager">Instance of the <see cref="ILibraryManager"/> interface.</param>
     /// <param name="userDataManager">Instance of the <see cref="IUserDataManager"/> interface.</param>
+    /// <param name="logger">Instance of the <see cref="ILogger{RatingsSync}"/> interface.</param>
     public RatingsSync(
         SyncPayloadBuilder payloadBuilder,
         SyncStateStore stateStore,
         MDBListApiClient apiClient,
         ILibraryManager libraryManager,
-        IUserDataManager userDataManager)
+        IUserDataManager userDataManager,
+        ILogger<RatingsSync> logger)
     {
         _payloadBuilder = payloadBuilder;
         _stateStore = stateStore;
         _apiClient = apiClient;
         _libraryManager = libraryManager;
         _userDataManager = userDataManager;
+        _logger = logger;
     }
 
     /// <summary>
@@ -146,15 +151,25 @@ public class RatingsSync
         var since = await _stateStore.GetSyncedAtAsync(userId, Category, cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrEmpty(since))
         {
+            _logger.LogDebug("MDBList Sync: ratings pull for user {UserName} has no cursor - running full pull", user.Username);
             return await PullFullAsync(userId, accessToken, user, snapshot, serverTime, cancellationToken).ConfigureAwait(false);
         }
 
         var journal = await _apiClient.FetchJournalAsync(accessToken, since, JournalPageSize, cancellationToken).ConfigureAwait(false);
         if (journal.RequiresFullSync)
         {
+            _logger.LogDebug(
+                "MDBList Sync: ratings pull cursor {Since} for user {UserName} is outside journal retention - running full pull",
+                since,
+                user.Username);
             return await PullFullAsync(userId, accessToken, user, snapshot, serverTime, cancellationToken).ConfigureAwait(false);
         }
 
+        _logger.LogDebug(
+            "MDBList Sync: ratings pull cursor {Since} for user {UserName} - running incremental pull ({Count} journal entries)",
+            since,
+            user.Username,
+            journal.Entries.Count);
         return await PullIncrementalAsync(userId, user, journal.Entries, snapshot, serverTime, cancellationToken).ConfigureAwait(false);
     }
 
@@ -166,6 +181,12 @@ public class RatingsSync
         // works for /sync/watched.
         var data = await _apiClient.FetchSyncItemsAsync(accessToken, Endpoint, mediatype: null, since: null, extended: null, JournalPageSize, cancellationToken)
             .ConfigureAwait(false);
+
+        _logger.LogDebug(
+            "MDBList Sync: ratings full pull for user {UserName} fetched {MovieCount} movies, {EpisodeCount} episodes from MDBList",
+            user.Username,
+            data.Movies.Count,
+            data.Episodes.Count);
 
         var applied = 0;
 
@@ -211,6 +232,7 @@ public class RatingsSync
         CancellationToken cancellationToken)
     {
         var applied = 0;
+        var skippedType = 0;
 
         foreach (var entry in entries)
         {
@@ -236,6 +258,18 @@ public class RatingsSync
                     applied++;
                 }
             }
+            else
+            {
+                skippedType++;
+            }
+        }
+
+        if (skippedType > 0)
+        {
+            _logger.LogDebug(
+                "MDBList Sync: ratings incremental pull for user {UserName} skipped {Count} journal entries with unhandled item type",
+                user.Username,
+                skippedType);
         }
 
         await _stateStore.SetSyncedAtAsync(userId, Category, serverTime ?? NowIso(), cancellationToken).ConfigureAwait(false);

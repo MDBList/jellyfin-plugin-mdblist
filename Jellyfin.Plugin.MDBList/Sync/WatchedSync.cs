@@ -168,15 +168,25 @@ public class WatchedSync
         var since = await _stateStore.GetSyncedAtAsync(userId, Category, cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrEmpty(since))
         {
+            _logger.LogDebug("MDBList Sync: watched pull for user {UserName} has no cursor - running full pull", user.Username);
             return await PullFullAsync(userId, accessToken, user, snapshot, serverTime, trusted, cancellationToken).ConfigureAwait(false);
         }
 
         var journal = await _apiClient.FetchJournalAsync(accessToken, since, JournalPageSize, cancellationToken).ConfigureAwait(false);
         if (journal.RequiresFullSync)
         {
+            _logger.LogDebug(
+                "MDBList Sync: watched pull cursor {Since} for user {UserName} is outside journal retention - running full pull",
+                since,
+                user.Username);
             return await PullFullAsync(userId, accessToken, user, snapshot, serverTime, trusted, cancellationToken).ConfigureAwait(false);
         }
 
+        _logger.LogDebug(
+            "MDBList Sync: watched pull cursor {Since} for user {UserName} - running incremental pull ({Count} journal entries)",
+            since,
+            user.Username,
+            journal.Entries.Count);
         return await PullIncrementalAsync(userId, user, journal.Entries, snapshot, serverTime, cancellationToken).ConfigureAwait(false);
     }
 
@@ -189,6 +199,12 @@ public class WatchedSync
         // every provider id.
         var data = await _apiClient.FetchSyncItemsAsync(accessToken, Endpoint, mediatype: null, since: null, extended: null, JournalPageSize, cancellationToken)
             .ConfigureAwait(false);
+
+        _logger.LogDebug(
+            "MDBList Sync: watched full pull for user {UserName} fetched {MovieCount} movies, {EpisodeCount} episodes from MDBList",
+            user.Username,
+            data.Movies.Count,
+            data.Episodes.Count);
 
         var applied = 0;
         var matchedKeys = new HashSet<string>(StringComparer.Ordinal);
@@ -358,6 +374,7 @@ public class WatchedSync
         CancellationToken cancellationToken)
     {
         var applied = 0;
+        var skippedType = 0;
 
         foreach (var entry in entries)
         {
@@ -392,8 +409,19 @@ public class WatchedSync
                     applied++;
                 }
             }
+            else
+            {
+                // show/season-level rows have no directly writable Jellyfin field; skipped
+                skippedType++;
+            }
+        }
 
-            // show/season-level rows have no directly writable Jellyfin field; skipped
+        if (skippedType > 0)
+        {
+            _logger.LogDebug(
+                "MDBList Sync: watched incremental pull for user {UserName} skipped {Count} journal entries with unhandled item type",
+                user.Username,
+                skippedType);
         }
 
         await _stateStore.SetSyncedAtAsync(userId, Category, serverTime ?? NowIso(), cancellationToken).ConfigureAwait(false);
