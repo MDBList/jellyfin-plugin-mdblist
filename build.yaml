@@ -1,7 +1,7 @@
 ---
 name: "MDBList"
 guid: "cbca79d7-ecde-4030-833c-3862f3c3a737"
-version: "1.0.0.7"
+version: "1.0.0.8"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 overview: "Two-way sync of watched status and ratings, plus collection sync, against MDBList"
@@ -15,6 +15,14 @@ owner: "linaspurinis"
 artifacts:
 - "Jellyfin.Plugin.MDBList.dll"
 changelog: >
+  1.0.0.8: Disconnecting an MDBList account now wipes that user's sync
+  bookkeeping, so reconnecting (same or a different account) does a
+  clean full resync instead of diffing against a stale or foreign
+  baseline. Adds Debug-level logging of the full-vs-incremental pull
+  decision, cursor value, and fetched/skipped item counts for watched
+  and ratings pulls, to make sync behavior easier to diagnose.
+
+
   1.0.0.7: Fixes a rare failure mode where a sync running right after
   Jellyfin starts, during a library scan, or against a temporarily
   unreadable library could be misread as "everything was removed" and
