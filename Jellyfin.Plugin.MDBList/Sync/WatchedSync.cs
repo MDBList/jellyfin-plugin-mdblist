@@ -237,7 +237,7 @@ public class WatchedSync
                 continue;
             }
 
-            var (appliedOk, key) = ApplyEpisodeEntry(user, snapshot, showIds, entry.Episode?.Season, entry.Episode?.Number, "active", entry.LastWatchedAt);
+            var (appliedOk, key) = ApplyEpisodeEntry(user, snapshot, showIds, entry.Episode?.Season, entry.Episode?.Number, entry.Episode?.Ids, "active", entry.LastWatchedAt);
             if (key is not null)
             {
                 matchedKeys.Add(key);
@@ -403,7 +403,7 @@ public class WatchedSync
             }
             else if (entry.ItemType == "episode")
             {
-                var (appliedOk, _) = ApplyEpisodeEntry(user, snapshot, entry.Ids, entry.Season, entry.Episode, entry.Status, remoteAt);
+                var (appliedOk, _) = ApplyEpisodeEntry(user, snapshot, entry.Ids, entry.Season, entry.Episode, entry.EpisodeIds, entry.Status, remoteAt);
                 if (appliedOk)
                 {
                     applied++;
@@ -439,11 +439,20 @@ public class WatchedSync
         return (ApplyWatched(user, match, status, remoteAt), ItemKeys.CanonicalMovieKey(match.Ids));
     }
 
-    private (bool Applied, string? Key) ApplyEpisodeEntry(User user, LibrarySnapshot snapshot, MediaIds showIds, int? season, int? episode, string? status, string? remoteAt)
+    private (bool Applied, string? Key) ApplyEpisodeEntry(User user, LibrarySnapshot snapshot, MediaIds showIds, int? season, int? episode, MediaIds? episodeIds, string? status, string? remoteAt)
     {
-        var match = snapshot.FindEpisode(showIds, season, episode);
+        var match = snapshot.FindEpisode(showIds, season, episode, episodeIds);
         if (match is null)
         {
+            _logger.LogDebug(
+                "MDBList Sync: watched pull found no local match for show tmdb={Tmdb} imdb={Imdb} tvdb={Tvdb} S{Season}E{Episode} episodeTmdb={EpisodeTmdb} episodeTvdb={EpisodeTvdb}",
+                showIds.Tmdb,
+                showIds.Imdb,
+                showIds.Tvdb,
+                season,
+                episode,
+                episodeIds?.Tmdb,
+                episodeIds?.Tvdb);
             return (false, null);
         }
 

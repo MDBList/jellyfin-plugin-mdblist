@@ -25,9 +25,10 @@ public static class MediaIdMapper
     }
 
     /// <summary>
-    /// Maps a show's provider ids (includes tvdb).
+    /// Maps a show's provider ids (includes tvdb). Also used for an
+    /// episode's own provider ids -- the mapping is identical.
     /// </summary>
-    /// <param name="providerIds">The show's <c>ProviderIds</c>.</param>
+    /// <param name="providerIds">The show's (or episode's) <c>ProviderIds</c>.</param>
     /// <returns>The mapped <see cref="MediaIds"/>.</returns>
     public static MediaIds MapShowIds(IReadOnlyDictionary<string, string>? providerIds)
     {

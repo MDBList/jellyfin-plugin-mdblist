@@ -72,15 +72,17 @@ public class LibrarySnapshot
     }
 
     /// <summary>
-    /// Looks up an episode by its parent show's ids plus season/episode number.
+    /// Looks up an episode by its own ids first, falling back to its parent
+    /// show's ids plus season/episode number.
     /// </summary>
     /// <param name="showIds">The parent show's ids.</param>
     /// <param name="season">The season number.</param>
     /// <param name="episode">The episode number.</param>
+    /// <param name="episodeIds">The episode's own ids, if the remote entry carries any.</param>
     /// <returns>The matched item, or null.</returns>
-    public SnapshotItem? FindEpisode(Api.Models.MediaIds showIds, int? season, int? episode)
+    public SnapshotItem? FindEpisode(Api.Models.MediaIds showIds, int? season, int? episode, Api.Models.MediaIds? episodeIds)
     {
-        return ItemKeys.FindEpisodeMatch(_episodeIndex, showIds, season, episode);
+        return ItemKeys.FindEpisodeMatch(_episodeIndex, showIds, season, episode, episodeIds);
     }
 
     private void AddMovies(ILibraryManager libraryManager, IUserDataManager userDataManager, User user)
@@ -154,6 +156,12 @@ public class LibrarySnapshot
             var season = episode.ParentIndexNumber;
             var startNumber = episode.IndexNumber.Value;
 
+            // The file's own provider ids (if any) describe one specific
+            // episode, even when IndexNumberEnd below covers a range (a
+            // multi-episode file) -- only meaningful for the first number
+            // in that range, not indexed per-number like the show-id keys.
+            var episodeIds = MediaIdMapper.MapShowIds(episode.ProviderIds);
+
             // A multi-episode file (IndexNumberEnd set) covers a numeric
             // range -- register one record per number so each syncs
             // independently, matching how MDBList tracks watched/rated
@@ -181,6 +189,14 @@ public class LibrarySnapshot
                 foreach (var key in ItemKeys.AllEpisodeIndexKeys(showIds, season, number))
                 {
                     _episodeIndex[key] = record;
+                }
+
+                if (number == startNumber && !episodeIds.IsEmpty)
+                {
+                    foreach (var key in ItemKeys.AllEpisodeIdIndexKeys(episodeIds))
+                    {
+                        _episodeIndex[key] = record;
+                    }
                 }
             }
         }

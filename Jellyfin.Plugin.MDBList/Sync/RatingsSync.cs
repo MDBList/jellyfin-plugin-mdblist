@@ -212,7 +212,7 @@ public class RatingsSync
                 continue;
             }
 
-            var match = snapshot.FindEpisode(showIds, entry.Episode?.Season, entry.Episode?.Number);
+            var match = snapshot.FindEpisode(showIds, entry.Episode?.Season, entry.Episode?.Number, entry.Episode?.Ids);
             if (ApplyRating(user, match, entry.Rating ?? 0))
             {
                 applied++;
@@ -252,7 +252,7 @@ public class RatingsSync
             }
             else if (entry.ItemType == "episode")
             {
-                var match = snapshot.FindEpisode(entry.Ids, entry.Season, entry.Episode);
+                var match = snapshot.FindEpisode(entry.Ids, entry.Season, entry.Episode, entry.EpisodeIds);
                 if (ApplyRating(user, match, rating))
                 {
                     applied++;

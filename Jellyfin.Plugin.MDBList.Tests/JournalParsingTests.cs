@@ -121,4 +121,59 @@ public class JournalParsingTests
         Assert.Equal(2, entry.Episode);
         Assert.Equal(81189, entry.Ids?.Tvdb);
     }
+
+    [Fact]
+    public void JournalEntry_EpisodeRow_ParsesEpisodeOwnTmdbAndTvdbIds()
+    {
+        // Real shape from api.mdblist's /sync/journal for an episode row:
+        // "ids" is the parent SHOW's ids, while the episode's own ids come
+        // as flat episode_tmdb_id/episode_tvdb_id fields -- verified against
+        // a live call, not documented anywhere. Distinct from the show's
+        // tmdb id (259909 here vs. episode_tmdb_id 5498853).
+        const string Json = """
+            {
+                "category": "watched",
+                "item_type": "episode",
+                "status": "added",
+                "action_at": "2026-09-01T18:23:41.000Z",
+                "value_at": "2026-03-17T23:20:43.000Z",
+                "ids": { "mdblist": "3jy9w", "tmdb": 259909 },
+                "season": 1,
+                "episode": 1,
+                "episode_tmdb_id": 5498853,
+                "episode_tvdb_id": 10607376
+            }
+            """;
+
+        var entry = JsonSerializer.Deserialize<JournalEntry>(Json);
+
+        Assert.NotNull(entry);
+        Assert.Equal(259909, entry!.Ids?.Tmdb);
+        Assert.Equal(5498853, entry.EpisodeTmdbId);
+        Assert.Equal(10607376, entry.EpisodeTvdbId);
+        Assert.Equal(5498853, entry.EpisodeIds?.Tmdb);
+        Assert.Equal(10607376, entry.EpisodeIds?.Tvdb);
+    }
+
+    [Fact]
+    public void JournalEntry_EpisodeIds_NullWhenNeitherFieldPresent()
+    {
+        const string Json = """
+            {
+                "category": "watched",
+                "item_type": "episode",
+                "status": "added",
+                "action_at": "2026-09-01T18:23:41.000Z",
+                "value_at": "2026-03-17T23:20:43.000Z",
+                "ids": { "tmdb": 259909 },
+                "season": 1,
+                "episode": 1
+            }
+            """;
+
+        var entry = JsonSerializer.Deserialize<JournalEntry>(Json);
+
+        Assert.NotNull(entry);
+        Assert.Null(entry!.EpisodeIds);
+    }
 }

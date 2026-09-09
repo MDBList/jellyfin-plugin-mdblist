@@ -24,6 +24,15 @@ public static class ItemKeys
         ("mdblist", ids => ids.Mdblist),
     ];
 
+    // MDBList only ever sends tmdb/tvdb for an episode's own id (see
+    // EpisodeRef.Ids / JournalEntry.EpisodeTmdbId+EpisodeTvdbId) -- no
+    // imdb/trakt/mdblist episode id exists in either API shape.
+    private static readonly (string Name, Func<MediaIds, string?> GetValue)[] EpisodeIdProviderPriority =
+    [
+        ("tmdb", ids => ids.Tmdb?.ToString(CultureInfo.InvariantCulture)),
+        ("tvdb", ids => ids.Tvdb?.ToString(CultureInfo.InvariantCulture)),
+    ];
+
     /// <summary>
     /// Builds the canonical key for a movie -- for the flat known-items sync
     /// state map, which spans movies and episodes together.
@@ -114,6 +123,25 @@ public static class ItemKeys
     }
 
     /// <summary>
+    /// Every per-provider index key an episode should be registered under
+    /// by its own id -- one per id it carries, independent of season/episode
+    /// number.
+    /// </summary>
+    /// <param name="episodeIds">The episode's own provider ids.</param>
+    /// <returns>The index keys.</returns>
+    internal static IEnumerable<string> AllEpisodeIdIndexKeys(MediaIds episodeIds)
+    {
+        foreach (var (name, getValue) in EpisodeIdProviderPriority)
+        {
+            var value = getValue(episodeIds);
+            if (!string.IsNullOrEmpty(value))
+            {
+                yield return $"episode-id:{name}:{value}";
+            }
+        }
+    }
+
+    /// <summary>
     /// Looks up a movie in a snapshot's movie index, trying every id
     /// <paramref name="ids"/> carries in priority order.
     /// </summary>
@@ -134,15 +162,30 @@ public static class ItemKeys
     }
 
     /// <summary>
-    /// Looks up an episode in a snapshot's episode index.
+    /// Looks up an episode in a snapshot's episode index -- by the
+    /// episode's own id first (immune to shows that renumber seasons/
+    /// episodes differently across metadata providers), falling back to
+    /// show id + season/episode number.
     /// </summary>
     /// <param name="index">The snapshot's episode index.</param>
     /// <param name="showIds">The parent show's ids to match against.</param>
     /// <param name="season">The season number.</param>
     /// <param name="episode">The episode number.</param>
+    /// <param name="episodeIds">The episode's own ids, if the remote entry carries any.</param>
     /// <returns>The matched item, or null.</returns>
-    internal static SnapshotItem? FindEpisodeMatch(IReadOnlyDictionary<string, SnapshotItem> index, MediaIds showIds, int? season, int? episode)
+    internal static SnapshotItem? FindEpisodeMatch(IReadOnlyDictionary<string, SnapshotItem> index, MediaIds showIds, int? season, int? episode, MediaIds? episodeIds)
     {
+        if (episodeIds is not null)
+        {
+            foreach (var key in AllEpisodeIdIndexKeys(episodeIds))
+            {
+                if (index.TryGetValue(key, out var idMatch))
+                {
+                    return idMatch;
+                }
+            }
+        }
+
         foreach (var key in AllEpisodeIndexKeys(showIds, season, episode))
         {
             if (index.TryGetValue(key, out var match))

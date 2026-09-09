@@ -97,6 +97,52 @@ public class ItemKeysTests
 
         var showIds = new MediaIds { Tvdb = 81189 };
 
-        Assert.Same(indexed, ItemKeys.FindEpisodeMatch(index, showIds, season: 1, episode: 1));
+        Assert.Same(indexed, ItemKeys.FindEpisodeMatch(index, showIds, season: 1, episode: 1, episodeIds: null));
+    }
+
+    [Fact]
+    public void FindEpisodeMatch_PrefersEpisodeOwnIdOverShowIdSeasonEpisode()
+    {
+        // Two different local episodes: one indexed under the show's
+        // canonical season/episode number, the other under the remote
+        // entry's own per-episode tmdb id -- e.g. because the source that
+        // numbered "show season/episode" disagrees with the source that
+        // assigned the episode's own tmdb id (anime renumbering). The
+        // episode-id match must win.
+        var byNumber = new SnapshotItem { Type = "episode", ItemId = Guid.NewGuid(), Ids = new MediaIds { Tmdb = 46298 }, Season = 1, EpisodeNumber = 1 };
+        var byEpisodeId = new SnapshotItem { Type = "episode", ItemId = Guid.NewGuid(), Ids = new MediaIds { Tmdb = 46298 }, Season = 4, EpisodeNumber = 12 };
+        var index = new Dictionary<string, SnapshotItem>
+        {
+            ["tmdb:46298:1:1"] = byNumber,
+            ["episode-id:tmdb:908701"] = byEpisodeId,
+        };
+
+        var showIds = new MediaIds { Tmdb = 46298 };
+        var episodeIds = new MediaIds { Tmdb = 908701 };
+
+        Assert.Same(byEpisodeId, ItemKeys.FindEpisodeMatch(index, showIds, season: 1, episode: 1, episodeIds));
+    }
+
+    [Fact]
+    public void FindEpisodeMatch_FallsBackToShowIdSeasonEpisode_WhenEpisodeIdNotIndexed()
+    {
+        var indexed = new SnapshotItem { Type = "episode", ItemId = Guid.NewGuid(), Ids = new MediaIds { Tmdb = 46298 }, Season = 1, EpisodeNumber = 1 };
+        var index = new Dictionary<string, SnapshotItem>
+        {
+            ["tmdb:46298:1:1"] = indexed,
+        };
+
+        var showIds = new MediaIds { Tmdb = 46298 };
+        var episodeIds = new MediaIds { Tmdb = 908701 };
+
+        Assert.Same(indexed, ItemKeys.FindEpisodeMatch(index, showIds, season: 1, episode: 1, episodeIds));
+    }
+
+    [Fact]
+    public void AllEpisodeIdIndexKeys_PrefersTmdbOverTvdb_ButYieldsBoth()
+    {
+        var ids = new MediaIds { Tmdb = 908701, Tvdb = 4180539 };
+
+        Assert.Equal(["episode-id:tmdb:908701", "episode-id:tvdb:4180539"], ItemKeys.AllEpisodeIdIndexKeys(ids));
     }
 }

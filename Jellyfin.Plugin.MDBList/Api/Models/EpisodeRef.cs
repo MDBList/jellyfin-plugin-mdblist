@@ -24,4 +24,14 @@ public class EpisodeRef
     /// </summary>
     [JsonPropertyName("show")]
     public ShowRef? Show { get; set; }
+
+    /// <summary>
+    /// Gets or sets the episode's own provider ids (currently tmdb/tvdb) --
+    /// distinct from <see cref="Show"/>'s ids. Stable across shows that
+    /// renumber seasons/episodes differently between metadata providers
+    /// (common for anime), so this is tried before falling back to
+    /// show id + season/episode number.
+    /// </summary>
+    [JsonPropertyName("ids")]
+    public MediaIds? Ids { get; set; }
 }

@@ -64,6 +64,33 @@ public class JournalEntry
     public int? Episode { get; set; }
 
     /// <summary>
+    /// Gets or sets the episode's own tmdb id (episode rows only) -- flat
+    /// fields here rather than nested under <see cref="Ids"/>, unlike the
+    /// /sync/watched full-pull shape. Distinct from the show's tmdb id in
+    /// <see cref="Ids"/>; tried first since it's stable across metadata
+    /// providers renumbering seasons/episodes differently (common for anime).
+    /// </summary>
+    [JsonPropertyName("episode_tmdb_id")]
+    public int? EpisodeTmdbId { get; set; }
+
+    /// <summary>
+    /// Gets or sets the episode's own tvdb id (episode rows only). See
+    /// <see cref="EpisodeTmdbId"/>.
+    /// </summary>
+    [JsonPropertyName("episode_tvdb_id")]
+    public int? EpisodeTvdbId { get; set; }
+
+    /// <summary>
+    /// Gets the episode's own ids as a <see cref="MediaIds"/> (episode rows
+    /// only), combining <see cref="EpisodeTmdbId"/>/<see cref="EpisodeTvdbId"/>
+    /// -- null if the row carries neither.
+    /// </summary>
+    [JsonIgnore]
+    public MediaIds? EpisodeIds => EpisodeTmdbId is null && EpisodeTvdbId is null
+        ? null
+        : new MediaIds { Tmdb = EpisodeTmdbId, Tvdb = EpisodeTvdbId };
+
+    /// <summary>
     /// Gets or sets the rating (rated-category rows only).
     /// </summary>
     [JsonPropertyName("rating")]
