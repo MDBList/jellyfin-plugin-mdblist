@@ -176,6 +176,7 @@ public class LibrarySnapshot
                     ItemId = episode.Id,
                     Title = episode.Name,
                     Ids = showIds,
+                    EpisodeIds = number == startNumber && !episodeIds.IsEmpty ? episodeIds : null,
                     Season = season,
                     EpisodeNumber = number,
                     Played = userData?.Played ?? false,

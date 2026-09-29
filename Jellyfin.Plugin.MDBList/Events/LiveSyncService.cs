@@ -172,12 +172,14 @@ public class LiveSyncService
                 return null;
             }
 
+            var episodeIds = MediaIdMapper.MapShowIds(episode.ProviderIds);
             return new SnapshotItem
             {
                 Type = "episode",
                 ItemId = episode.Id,
                 Title = episode.Name,
                 Ids = showIds,
+                EpisodeIds = episodeIds.IsEmpty ? null : episodeIds,
                 Season = episode.ParentIndexNumber,
                 EpisodeNumber = episode.IndexNumber,
                 Played = userData.Played,

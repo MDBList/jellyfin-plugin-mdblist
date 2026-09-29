@@ -332,8 +332,13 @@ public class SyncPayloadBuilder
     /// Groups flat episode items by parent show into the nested
     /// <c>{"ids", "seasons": [{"number", "episodes": [{"number", ...}]}]}</c>
     /// shape every /sync/* endpoint expects -- port of build_shows_payload.
+    /// Episodes with their own provider ids also carry them as "ids".
     /// </summary>
-    private static JsonArray BuildShowsPayload(IReadOnlyCollection<KnownSyncItem> episodeItems, string? fieldName, Func<KnownSyncItem, JsonNode?>? getValue)
+    /// <param name="episodeItems">The episode items to group.</param>
+    /// <param name="fieldName">The wire field name for the value, or null for removals.</param>
+    /// <param name="getValue">Extracts the value to send for one item, or null for removals.</param>
+    /// <returns>The "shows" array.</returns>
+    internal static JsonArray BuildShowsPayload(IReadOnlyCollection<KnownSyncItem> episodeItems, string? fieldName, Func<KnownSyncItem, JsonNode?>? getValue)
     {
         var showsByKey = new Dictionary<string, (JsonNode Ids, Dictionary<int, JsonArray> Seasons)>(StringComparer.Ordinal);
         var order = new List<string>();
@@ -360,6 +365,13 @@ public class SyncPayloadBuilder
             }
 
             var entry = new JsonObject { ["number"] = item.Episode.Value };
+            if (item.EpisodeIds is { IsEmpty: false })
+            {
+                // Lets MDBList resolve the exact episode by id (TVDB/TMDb) even
+                // when the library numbers it differently from TMDb.
+                entry["ids"] = SerializeIds(item.EpisodeIds);
+            }
+
             if (fieldName is not null && getValue is not null)
             {
                 entry[fieldName] = getValue(item);

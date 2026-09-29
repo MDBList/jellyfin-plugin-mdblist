@@ -33,6 +33,15 @@ public class SnapshotItem
     public required MediaIds Ids { get; init; }
 
     /// <summary>
+    /// Gets the episode's own provider ids (TVDB/TMDb episode ids), when the
+    /// library has them -- sent alongside season/episode numbers so MDBList can
+    /// resolve the exact episode even when the library numbers it differently
+    /// (TVDB-ordered anime). Null for movies and for the extra numbers of a
+    /// multi-episode file.
+    /// </summary>
+    public MediaIds? EpisodeIds { get; init; }
+
+    /// <summary>
     /// Gets the season number (episodes only).
     /// </summary>
     public int? Season { get; init; }

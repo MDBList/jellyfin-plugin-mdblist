@@ -22,6 +22,13 @@ public class KnownSyncItem
     public MediaIds Ids { get; set; } = new();
 
     /// <summary>
+    /// Gets or sets the episode's own provider ids (see
+    /// <see cref="Library.SnapshotItem.EpisodeIds"/>); pushed as the nested
+    /// episode's "ids" so MDBList resolves it by id before by number.
+    /// </summary>
+    public MediaIds? EpisodeIds { get; set; }
+
+    /// <summary>
     /// Gets or sets the season number (episodes only).
     /// </summary>
     public int? Season { get; set; }
