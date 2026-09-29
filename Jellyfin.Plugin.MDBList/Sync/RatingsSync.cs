@@ -175,6 +175,21 @@ public class RatingsSync
 
     private async Task<PullResult> PullFullAsync(Guid userId, string accessToken, User user, LibrarySnapshot snapshot, string? serverTime, CancellationToken cancellationToken)
     {
+        var changes = new PulledRatingChanges();
+        try
+        {
+            return await PullFullCoreAsync(userId, accessToken, user, snapshot, serverTime, changes, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            // Also on a later item's failure: what earlier items already
+            // changed in Jellyfin must still be recorded (see ApplyRating).
+            await PersistPulledStateAsync(userId, changes, CancellationToken.None).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<PullResult> PullFullCoreAsync(Guid userId, string accessToken, User user, LibrarySnapshot snapshot, string? serverTime, PulledRatingChanges changes, CancellationToken cancellationToken)
+    {
         // extended=null (full, not ids_only): MDBList's ids_only ratings
         // response only carries the episode's own tmdb id, not
         // season/episode/show, so it can't be matched the way ids_only
@@ -189,7 +204,6 @@ public class RatingsSync
             data.Episodes.Count);
 
         var applied = 0;
-        var changes = new PulledRatingChanges();
 
         foreach (var entry in data.Movies)
         {
@@ -233,9 +247,30 @@ public class RatingsSync
         string? serverTime,
         CancellationToken cancellationToken)
     {
+        var changes = new PulledRatingChanges();
+        try
+        {
+            return await PullIncrementalCoreAsync(userId, user, entries, snapshot, serverTime, changes, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            // Also on a later item's failure: what earlier items already
+            // changed in Jellyfin must still be recorded (see ApplyRating).
+            await PersistPulledStateAsync(userId, changes, CancellationToken.None).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<PullResult> PullIncrementalCoreAsync(
+        Guid userId,
+        User user,
+        IReadOnlyCollection<JournalEntry> entries,
+        LibrarySnapshot snapshot,
+        string? serverTime,
+        PulledRatingChanges changes,
+        CancellationToken cancellationToken)
+    {
         var applied = 0;
         var skippedType = 0;
-        var changes = new PulledRatingChanges();
 
         foreach (var entry in entries)
         {
@@ -282,16 +317,26 @@ public class RatingsSync
 
     private bool ApplyRating(User user, SnapshotItem? match, int rating, PulledRatingChanges changes)
     {
-        if (match is null || ToApiRating(match.Rating) == rating)
+        if (match is null)
         {
             return false;
         }
 
-        SetRating(user, match.ItemId, rating);
+        // This pull may already have changed the item (rated, then un-rated, in
+        // one batch): compare against that, not the pre-pull snapshot.
+        var localRating = changes.Current.TryGetValue(match.ItemId, out var current) ? current : ToApiRating(match.Rating);
+        var alreadyMatches = localRating == rating;
+        if (!alreadyMatches)
+        {
+            SetRating(user, match.ItemId, rating);
+            changes.Current[match.ItemId] = rating;
+        }
 
         // Record what this change makes MDBList and Jellyfin agree on, for the
         // known-items state: without it the next push diffs a pulled rating as
         // a new local one and pushes it back -- undoing a later remote change.
+        // Also when it already matched (e.g. applied by an earlier, interrupted
+        // pull), so a retry heals the record.
         var key = CanonicalKey(match);
         if (key is not null)
         {
@@ -307,7 +352,7 @@ public class RatingsSync
             }
         }
 
-        return true;
+        return !alreadyMatches;
     }
 
     private async Task PersistPulledStateAsync(Guid userId, PulledRatingChanges changes, CancellationToken cancellationToken)
@@ -318,6 +363,8 @@ public class RatingsSync
         }
 
         await _stateStore.MergeKnownItemsAsync(userId, Category, changes.Upserts, changes.Removed.ToList(), cancellationToken).ConfigureAwait(false);
+        changes.Upserts.Clear();
+        changes.Removed.Clear();
     }
 
     private void SetRating(User user, Guid itemId, int rating)
@@ -417,5 +464,11 @@ public class RatingsSync
         public Dictionary<string, KnownSyncItem> Upserts { get; } = new(StringComparer.Ordinal);
 
         public HashSet<string> Removed { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>
+        /// Gets each item's rating as this pull left it, for later entries in the
+        /// same batch.
+        /// </summary>
+        public Dictionary<Guid, int> Current { get; } = new();
     }
 }

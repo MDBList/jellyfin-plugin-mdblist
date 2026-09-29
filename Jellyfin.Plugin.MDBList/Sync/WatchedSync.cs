@@ -192,6 +192,21 @@ public class WatchedSync
 
     private async Task<PullResult> PullFullAsync(Guid userId, string accessToken, User user, LibrarySnapshot snapshot, string? serverTime, bool trusted, CancellationToken cancellationToken)
     {
+        var changes = new PulledStateChanges();
+        try
+        {
+            return await PullFullCoreAsync(userId, accessToken, user, snapshot, serverTime, trusted, changes, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            // Also on a later item's failure: what earlier items already
+            // changed in Jellyfin must still be recorded (see ApplyWatched).
+            await PersistPulledStateAsync(userId, changes, CancellationToken.None).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<PullResult> PullFullCoreAsync(Guid userId, string accessToken, User user, LibrarySnapshot snapshot, string? serverTime, bool trusted, PulledStateChanges changes, CancellationToken cancellationToken)
+    {
         // extended=null (full, not ids_only): ids_only only exposes a
         // movie's tmdb id (and an episode's parent show's tmdb id). A local
         // item identified only by imdb/tvdb carries no tmdb id at all, so it
@@ -208,7 +223,6 @@ public class WatchedSync
 
         var applied = 0;
         var matchedKeys = new HashSet<string>(StringComparer.Ordinal);
-        var changes = new PulledStateChanges();
 
         foreach (var entry in data.Movies)
         {
@@ -376,9 +390,30 @@ public class WatchedSync
         string? serverTime,
         CancellationToken cancellationToken)
     {
+        var changes = new PulledStateChanges();
+        try
+        {
+            return await PullIncrementalCoreAsync(userId, user, entries, snapshot, serverTime, changes, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            // Also on a later item's failure: what earlier items already
+            // changed in Jellyfin must still be recorded (see ApplyWatched).
+            await PersistPulledStateAsync(userId, changes, CancellationToken.None).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<PullResult> PullIncrementalCoreAsync(
+        Guid userId,
+        User user,
+        IReadOnlyCollection<JournalEntry> entries,
+        LibrarySnapshot snapshot,
+        string? serverTime,
+        PulledStateChanges changes,
+        CancellationToken cancellationToken)
+    {
         var applied = 0;
         var skippedType = 0;
-        var changes = new PulledStateChanges();
 
         foreach (var entry in entries)
         {
@@ -475,22 +510,35 @@ public class WatchedSync
     /// </summary>
     private bool ApplyWatched(User user, SnapshotItem record, string? status, string? remoteAt, PulledStateChanges changes)
     {
-        var localTs = record.LastPlayedDate;
+        // This pull may already have changed the item (watched, then unwatched,
+        // in one batch): compare against that, not the pre-pull snapshot.
+        var (localPlayCount, localTs) = changes.Current.TryGetValue(record.ItemId, out var current)
+            ? current
+            : (record.PlayCount, record.LastPlayedDate);
         var remoteTs = ParseTimestamp(remoteAt);
         var removed = status == "removed";
+        var key = CanonicalKey(record);
 
-        if (!ShouldApplyRemoteWatched(removed, record.PlayCount, localTs, remoteTs))
+        if (!ShouldApplyRemoteWatched(removed, localPlayCount, localTs, remoteTs))
         {
+            if (removed && localPlayCount <= 0 && key is not null)
+            {
+                // Already unwatched here (e.g. by an earlier, interrupted pull):
+                // still record it as synced
+                changes.Removed.Add(key);
+                changes.Upserts.Remove(key);
+            }
+
             return false;
         }
 
         // Record what this change makes MDBList and Jellyfin agree on, for the
         // known-items state: without it the next push diffs a pulled watch as a
         // new local one and pushes it back -- undoing a later remote unwatch.
-        var key = CanonicalKey(record);
         if (removed)
         {
             SetWatched(user, record.ItemId, played: false, playCount: 0, lastPlayedDate: null);
+            changes.Current[record.ItemId] = (0, localTs);
             if (key is not null)
             {
                 changes.Removed.Add(key);
@@ -499,7 +547,8 @@ public class WatchedSync
         }
         else
         {
-            var savedLastPlayed = SetWatched(user, record.ItemId, played: true, playCount: Math.Max(record.PlayCount, 1), lastPlayedDate: remoteTs ?? record.LastPlayedDate);
+            var savedLastPlayed = SetWatched(user, record.ItemId, played: true, playCount: Math.Max(localPlayCount, 1), lastPlayedDate: remoteTs ?? localTs);
+            changes.Current[record.ItemId] = (Math.Max(localPlayCount, 1), savedLastPlayed);
             if (key is not null)
             {
                 // Built from what Jellyfin now reports, the same way the next
@@ -573,6 +622,8 @@ public class WatchedSync
         }
 
         await _stateStore.MergeKnownItemsAsync(userId, Category, changes.Upserts, changes.Removed.ToList(), cancellationToken).ConfigureAwait(false);
+        changes.Upserts.Clear();
+        changes.Removed.Clear();
     }
 
     private static DateTime? ParseTimestamp(string? value)
@@ -666,5 +717,11 @@ public class WatchedSync
         public Dictionary<string, KnownSyncItem> Upserts { get; } = new(StringComparer.Ordinal);
 
         public HashSet<string> Removed { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>
+        /// Gets each item's play count and last-played date as this pull left it,
+        /// for later entries in the same batch.
+        /// </summary>
+        public Dictionary<Guid, (int PlayCount, DateTime? LastPlayed)> Current { get; } = new();
     }
 }
