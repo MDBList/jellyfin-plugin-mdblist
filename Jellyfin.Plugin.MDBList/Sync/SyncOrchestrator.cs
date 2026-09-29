@@ -225,9 +225,24 @@ public sealed class SyncOrchestrator : IDisposable
             var watchedSummary = "watched skipped";
             if (config.WatchedEnabled)
             {
-                var watchedPush = await _watchedSync.PushAsync(user.Id, accessToken, snapshot, effectiveAllowRemovals, cancellationToken).ConfigureAwait(false);
-                var watchedPull = await _watchedSync.PullAsync(user.Id, accessToken, user, snapshot, activities.ServerTime, effectiveAllowRemovals, cancellationToken)
-                    .ConfigureAwait(false);
+                PushResult watchedPush;
+                PullResult watchedPull;
+                var watchedKnown = await _stateStore.GetKnownItemsAsync(user.Id, SyncCategory.Watched, cancellationToken).ConfigureAwait(false);
+                if (watchedKnown.Count == 0)
+                {
+                    // First sync: pull first so the push only sends what MDBList
+                    // doesn't already have -- see WatchedSync.SeedPullAsync. The
+                    // push is a membership diff, so the snapshot needn't be re-read.
+                    watchedPull = await _watchedSync.SeedPullAsync(user.Id, accessToken, user, snapshot, activities.ServerTime, cancellationToken).ConfigureAwait(false);
+                    watchedPush = await _watchedSync.PushAsync(user.Id, accessToken, snapshot, effectiveAllowRemovals, cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    watchedPush = await _watchedSync.PushAsync(user.Id, accessToken, snapshot, effectiveAllowRemovals, cancellationToken).ConfigureAwait(false);
+                    watchedPull = await _watchedSync.PullAsync(user.Id, accessToken, user, snapshot, activities.ServerTime, effectiveAllowRemovals, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+
                 watchedSummary = string.Format(
                     CultureInfo.InvariantCulture,
                     "watched push +{0}/-{1}{2} pull {3}{4} ({5})",

@@ -137,6 +137,28 @@ public class WatchedSync
     }
 
     /// <summary>
+    /// First sync for this user (no known items yet): a full pull with no
+    /// removal reconcile, run BEFORE the first push so it records what MDBList
+    /// already has. Without it the first push re-sends the whole local
+    /// history, and every LastPlayedDate that differs from MDBList's stored
+    /// timestamp is written as a fresh watch (which e.g. un-drops shows).
+    /// Anything watched only locally just hasn't been pushed yet -- not
+    /// unwatched remotely -- hence no removal reconcile.
+    /// </summary>
+    /// <param name="userId">The Jellyfin user.</param>
+    /// <param name="accessToken">A valid MDBList access token.</param>
+    /// <param name="user">The resolved Jellyfin user, for writing user data.</param>
+    /// <param name="snapshot">The current library snapshot, to match remote entries against.</param>
+    /// <param name="serverTime">See <see cref="PullAsync"/>.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>How many items were actually changed.</returns>
+    public async Task<PullResult> SeedPullAsync(Guid userId, string accessToken, User user, LibrarySnapshot snapshot, string? serverTime, CancellationToken cancellationToken)
+    {
+        _logger.LogDebug("MDBList Sync: watched pull for user {UserName} seeding first sync - running full pull", user.Username);
+        return await PullFullAsync(userId, accessToken, user, snapshot, serverTime, trusted: false, cancellationToken, seed: true).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Pulls remote watched-status changes into Jellyfin -- an incremental
     /// journal read if a cursor exists, otherwise (or if the cursor is
     /// outside the 30-day journal retention window) a full reconciliation.
@@ -190,12 +212,12 @@ public class WatchedSync
         return await PullIncrementalAsync(userId, user, journal.Entries, snapshot, serverTime, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<PullResult> PullFullAsync(Guid userId, string accessToken, User user, LibrarySnapshot snapshot, string? serverTime, bool trusted, CancellationToken cancellationToken)
+    private async Task<PullResult> PullFullAsync(Guid userId, string accessToken, User user, LibrarySnapshot snapshot, string? serverTime, bool trusted, CancellationToken cancellationToken, bool seed = false)
     {
         var changes = new PulledStateChanges();
         try
         {
-            return await PullFullCoreAsync(userId, accessToken, user, snapshot, serverTime, trusted, changes, cancellationToken).ConfigureAwait(false);
+            return await PullFullCoreAsync(userId, accessToken, user, snapshot, serverTime, trusted, seed, changes, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -205,7 +227,7 @@ public class WatchedSync
         }
     }
 
-    private async Task<PullResult> PullFullCoreAsync(Guid userId, string accessToken, User user, LibrarySnapshot snapshot, string? serverTime, bool trusted, PulledStateChanges changes, CancellationToken cancellationToken)
+    private async Task<PullResult> PullFullCoreAsync(Guid userId, string accessToken, User user, LibrarySnapshot snapshot, string? serverTime, bool trusted, bool seed, PulledStateChanges changes, CancellationToken cancellationToken)
     {
         // extended=null (full, not ids_only): ids_only only exposes a
         // movie's tmdb id (and an episode's parent show's tmdb id). A local
@@ -293,6 +315,13 @@ public class WatchedSync
             {
                 locallyWatched.Add((episode, key));
             }
+        }
+
+        // A seed pull (see SeedPullAsync) never unwatches: anything watched
+        // only locally hasn't been pushed yet.
+        if (seed)
+        {
+            locallyWatched.Clear();
         }
 
         var candidateRemovals = locallyWatched.Where(w => !matchedKeys.Contains(w.Key)).ToList();
