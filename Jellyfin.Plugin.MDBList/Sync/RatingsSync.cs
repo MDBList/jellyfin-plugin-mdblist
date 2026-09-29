@@ -189,6 +189,7 @@ public class RatingsSync
             data.Episodes.Count);
 
         var applied = 0;
+        var changes = new PulledRatingChanges();
 
         foreach (var entry in data.Movies)
         {
@@ -198,7 +199,7 @@ public class RatingsSync
                 continue;
             }
 
-            if (ApplyRating(user, snapshot.FindMovie(ids), entry.Rating ?? 0))
+            if (ApplyRating(user, snapshot.FindMovie(ids), entry.Rating ?? 0, changes))
             {
                 applied++;
             }
@@ -213,12 +214,13 @@ public class RatingsSync
             }
 
             var match = snapshot.FindEpisode(showIds, entry.Episode?.Season, entry.Episode?.Number, entry.Episode?.Ids);
-            if (ApplyRating(user, match, entry.Rating ?? 0))
+            if (ApplyRating(user, match, entry.Rating ?? 0, changes))
             {
                 applied++;
             }
         }
 
+        await PersistPulledStateAsync(userId, changes, cancellationToken).ConfigureAwait(false);
         await _stateStore.SetSyncedAtAsync(userId, Category, serverTime ?? NowIso(), cancellationToken).ConfigureAwait(false);
         return new PullResult { PulledApplied = applied, Mode = "full" };
     }
@@ -233,6 +235,7 @@ public class RatingsSync
     {
         var applied = 0;
         var skippedType = 0;
+        var changes = new PulledRatingChanges();
 
         foreach (var entry in entries)
         {
@@ -245,7 +248,7 @@ public class RatingsSync
 
             if (entry.ItemType == "movie")
             {
-                if (ApplyRating(user, snapshot.FindMovie(entry.Ids), rating))
+                if (ApplyRating(user, snapshot.FindMovie(entry.Ids), rating, changes))
                 {
                     applied++;
                 }
@@ -253,7 +256,7 @@ public class RatingsSync
             else if (entry.ItemType == "episode")
             {
                 var match = snapshot.FindEpisode(entry.Ids, entry.Season, entry.Episode, entry.EpisodeIds);
-                if (ApplyRating(user, match, rating))
+                if (ApplyRating(user, match, rating, changes))
                 {
                     applied++;
                 }
@@ -272,11 +275,12 @@ public class RatingsSync
                 skippedType);
         }
 
+        await PersistPulledStateAsync(userId, changes, cancellationToken).ConfigureAwait(false);
         await _stateStore.SetSyncedAtAsync(userId, Category, serverTime ?? NowIso(), cancellationToken).ConfigureAwait(false);
         return new PullResult { PulledApplied = applied, Mode = "incremental" };
     }
 
-    private bool ApplyRating(User user, SnapshotItem? match, int rating)
+    private bool ApplyRating(User user, SnapshotItem? match, int rating, PulledRatingChanges changes)
     {
         if (match is null || ToApiRating(match.Rating) == rating)
         {
@@ -284,7 +288,36 @@ public class RatingsSync
         }
 
         SetRating(user, match.ItemId, rating);
+
+        // Record what this change makes MDBList and Jellyfin agree on, for the
+        // known-items state: without it the next push diffs a pulled rating as
+        // a new local one and pushes it back -- undoing a later remote change.
+        var key = CanonicalKey(match);
+        if (key is not null)
+        {
+            if (rating > 0)
+            {
+                changes.Upserts[key] = BuildKnownItem(match, rating);
+                changes.Removed.Remove(key);
+            }
+            else
+            {
+                changes.Removed.Add(key);
+                changes.Upserts.Remove(key);
+            }
+        }
+
         return true;
+    }
+
+    private async Task PersistPulledStateAsync(Guid userId, PulledRatingChanges changes, CancellationToken cancellationToken)
+    {
+        if (changes.Upserts.Count == 0 && changes.Removed.Count == 0)
+        {
+            return;
+        }
+
+        await _stateStore.MergeKnownItemsAsync(userId, Category, changes.Upserts, changes.Removed.ToList(), cancellationToken).ConfigureAwait(false);
     }
 
     private void SetRating(User user, Guid itemId, int rating)
@@ -373,5 +406,16 @@ public class RatingsSync
     private static string NowIso()
     {
         return DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// Known-items changes from one pull run: items it rated in Jellyfin
+    /// (upserts) and unrated (removed).
+    /// </summary>
+    private sealed class PulledRatingChanges
+    {
+        public Dictionary<string, KnownSyncItem> Upserts { get; } = new(StringComparer.Ordinal);
+
+        public HashSet<string> Removed { get; } = new(StringComparer.Ordinal);
     }
 }
