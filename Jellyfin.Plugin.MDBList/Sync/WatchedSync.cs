@@ -575,6 +575,18 @@ public class WatchedSync
                 changes.Upserts.Remove(key);
             }
         }
+        else if (IsAlreadyWatchedAt(localPlayCount, localTs, remoteTs))
+        {
+            // Already exactly this in Jellyfin: skip the write, or every full
+            // pull rewrites the user data of the whole watched library
+            if (key is not null)
+            {
+                changes.Upserts[key] = BuildKnownItem(record, localTs);
+                changes.Removed.Remove(key);
+            }
+
+            return false;
+        }
         else
         {
             var savedLastPlayed = SetWatched(user, record.ItemId, played: true, playCount: Math.Max(localPlayCount, 1), lastPlayedDate: remoteTs ?? localTs);
@@ -617,6 +629,23 @@ public class WatchedSync
         }
 
         return !(localPlayCount > 0 && localTs.HasValue && remoteTs.HasValue && localTs > remoteTs);
+    }
+
+    /// <summary>
+    /// Whether a remote watch is already exactly what Jellyfin has -- watched,
+    /// with the same LastPlayedDate to the second (MDBList's precision) -- so
+    /// applying it would be a no-op write.
+    /// </summary>
+    /// <param name="localPlayCount">The local item's current play count.</param>
+    /// <param name="localTs">The local item's <c>LastPlayedDate</c>, if any.</param>
+    /// <param name="remoteTs">The remote row's timestamp, if any.</param>
+    /// <returns>True if nothing would change locally.</returns>
+    internal static bool IsAlreadyWatchedAt(int localPlayCount, DateTime? localTs, DateTime? remoteTs)
+    {
+        return localPlayCount > 0
+            && localTs.HasValue
+            && remoteTs.HasValue
+            && localTs.Value.Ticks / TimeSpan.TicksPerSecond == remoteTs.Value.Ticks / TimeSpan.TicksPerSecond;
     }
 
     /// <returns>The item's LastPlayedDate as Jellyfin stored it, read back after saving.</returns>

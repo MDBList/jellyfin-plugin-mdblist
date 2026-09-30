@@ -82,4 +82,28 @@ public class WatchedConflictResolutionTests
     {
         Assert.True(WatchedSync.ShouldApplyRemoteWatched(removed: true, localPlayCount: 1, localTs: Earlier, remoteTs: null));
     }
+
+    [Fact]
+    public void AlreadyWatchedAt_SameSecond_IsNoOp()
+    {
+        Assert.True(WatchedSync.IsAlreadyWatchedAt(localPlayCount: 1, localTs: Earlier.AddMilliseconds(400), remoteTs: Earlier));
+    }
+
+    [Fact]
+    public void AlreadyWatchedAt_DifferentTimestamp_IsNotNoOp()
+    {
+        Assert.False(WatchedSync.IsAlreadyWatchedAt(localPlayCount: 1, localTs: Earlier, remoteTs: Earlier.AddSeconds(1)));
+    }
+
+    [Fact]
+    public void AlreadyWatchedAt_NotWatchedLocally_IsNotNoOp()
+    {
+        Assert.False(WatchedSync.IsAlreadyWatchedAt(localPlayCount: 0, localTs: Earlier, remoteTs: Earlier));
+    }
+
+    [Fact]
+    public void AlreadyWatchedAt_MissingTimestamp_IsNotNoOp()
+    {
+        Assert.False(WatchedSync.IsAlreadyWatchedAt(localPlayCount: 1, localTs: null, remoteTs: Earlier));
+    }
 }
