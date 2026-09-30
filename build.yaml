@@ -1,7 +1,7 @@
 ---
 name: "MDBList"
 guid: "cbca79d7-ecde-4030-833c-3862f3c3a737"
-version: "1.0.0.13"
+version: "1.0.0.14"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 overview: "Two-way sync of watched status and ratings, plus collection sync, against MDBList"
@@ -15,6 +15,12 @@ owner: "linaspurinis"
 artifacts:
 - "Jellyfin.Plugin.MDBList.dll"
 changelog: >
+  1.0.0.14: Fixed the first watched sync sending the whole Jellyfin watch
+  history to MDBList, which re-dated watches and could un-drop dropped
+  shows. It now pulls MDBList's history first and only sends what MDBList
+  doesn't have.
+
+
   1.0.0.13: Fixed a watch then unwatch (or rating then removal) pulled
   from MDBList in the same sync only applying the first change, and
   changes pulled before a failed sync being pushed back on the next
