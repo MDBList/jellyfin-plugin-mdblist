@@ -195,6 +195,12 @@ public class WatchedSync
             return await PullFullAsync(userId, accessToken, user, snapshot, serverTime, trusted, cancellationToken).ConfigureAwait(false);
         }
 
+        if (trusted && await _stateStore.GetFullReconcilePendingAsync(userId, Category, cancellationToken).ConfigureAwait(false))
+        {
+            _logger.LogDebug("MDBList Sync: watched pull for user {UserName} has held removals from an earlier run - running full pull", user.Username);
+            return await PullFullAsync(userId, accessToken, user, snapshot, serverTime, trusted, cancellationToken).ConfigureAwait(false);
+        }
+
         var journal = await _apiClient.FetchJournalAsync(accessToken, since, JournalPageSize, cancellationToken).ConfigureAwait(false);
         if (journal.RequiresFullSync)
         {
@@ -349,18 +355,18 @@ public class WatchedSync
 
         await PersistPulledStateAsync(userId, changes, cancellationToken).ConfigureAwait(false);
 
-        if (holdRemovals)
-        {
-            // Held, not dropped -- don't advance the watermark either, so
-            // the next pull retries a full reconcile from scratch (and, per
-            // PullAsync, keeps landing back here) instead of downgrading to
-            // the incremental journal path and never revisiting these
-            // items.
-            return new PullResult { PulledApplied = applied, Mode = "full", SkippedRemove = candidateRemovals.Count };
-        }
-
+        // The watermark advances even when removals are held: the adds above
+        // are applied, and later untrusted runs can follow the journal
+        // incrementally. Leaving it unset made every activity-gated pull
+        // re-run this full pull (and hold again) until a trusted run came
+        // along. The held removals aren't dropped -- the pending flag makes
+        // the next trusted run (see PullAsync) redo this full reconcile.
         await _stateStore.SetSyncedAtAsync(userId, Category, serverTime ?? NowIso(), cancellationToken).ConfigureAwait(false);
-        return new PullResult { PulledApplied = applied, Mode = "full" };
+        await _stateStore.SetFullReconcilePendingAsync(userId, Category, holdRemovals, cancellationToken).ConfigureAwait(false);
+
+        return holdRemovals
+            ? new PullResult { PulledApplied = applied, Mode = "full", SkippedRemove = candidateRemovals.Count }
+            : new PullResult { PulledApplied = applied, Mode = "full" };
     }
 
     /// <summary>

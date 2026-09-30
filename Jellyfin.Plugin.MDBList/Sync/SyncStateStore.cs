@@ -93,6 +93,42 @@ public sealed class SyncStateStore : IDisposable
     }
 
     /// <summary>
+    /// Gets whether a full pull held removals for the next trusted run.
+    /// </summary>
+    /// <param name="userId">The Jellyfin user.</param>
+    /// <param name="category">The sync category.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>True if a full reconcile is pending.</returns>
+    public async Task<bool> GetFullReconcilePendingAsync(Guid userId, SyncCategory category, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var file = await EnsureLoadedAsync(cancellationToken).ConfigureAwait(false);
+            return TryGetUserState(file, userId, out var userState) && GetCategoryState(userState, category).FullReconcilePending;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Sets whether a full pull held removals for the next trusted run.
+    /// </summary>
+    /// <param name="userId">The Jellyfin user.</param>
+    /// <param name="category">The sync category.</param>
+    /// <param name="pending">Whether a full reconcile is pending.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    public async Task SetFullReconcilePendingAsync(Guid userId, SyncCategory category, bool pending, CancellationToken cancellationToken)
+    {
+        await MutateAsync(
+            file => GetCategoryState(GetOrCreateUserState(file, userId), category).FullReconcilePending = pending,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Gets the last-pushed identity + value for every known item in a category.
     /// </summary>
     /// <param name="userId">The Jellyfin user.</param>

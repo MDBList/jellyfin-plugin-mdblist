@@ -15,6 +15,13 @@ public class CategoryState
     public string? SyncedAt { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether a full pull held removals the
+    /// trigger couldn't apply -- the next trusted pull then runs a full
+    /// reconcile instead of an incremental one.
+    /// </summary>
+    public bool FullReconcilePending { get; set; }
+
+    /// <summary>
     /// Gets the last-pushed identity + value for every known item, keyed by
     /// canonical id (see <see cref="Library.ItemKeys"/>).
     /// </summary>
