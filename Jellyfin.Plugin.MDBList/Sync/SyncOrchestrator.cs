@@ -228,12 +228,16 @@ public sealed class SyncOrchestrator : IDisposable
                 PushResult watchedPush;
                 PullResult watchedPull;
                 var watchedKnown = await _stateStore.GetKnownItemsAsync(user.Id, SyncCategory.Watched, cancellationToken).ConfigureAwait(false);
-                if (watchedKnown.Count == 0)
+                var watchedCursor = await _stateStore.GetSyncedAtAsync(user.Id, SyncCategory.Watched, cancellationToken).ConfigureAwait(false);
+                if (watchedKnown.Count == 0 && string.IsNullOrEmpty(watchedCursor))
                 {
                     // First sync: pull first so the push only sends what MDBList
                     // doesn't already have -- see WatchedSync.SeedPullAsync. The
-                    // push diffs LastPlayedDate too, so it needs the snapshot
-                    // re-read after the pull wrote to user data.
+                    // seed pull sets the cursor, so a user whose known items stay
+                    // empty (nothing watched or matched) isn't re-seeded with a
+                    // full pull every run. The push diffs LastPlayedDate too,
+                    // so it needs the snapshot re-read after the pull wrote to
+                    // user data.
                     watchedPull = await _watchedSync.SeedPullAsync(user.Id, accessToken, user, snapshot, activities.ServerTime, cancellationToken).ConfigureAwait(false);
                     snapshot = LibrarySnapshot.Build(_libraryManager, _userDataManager, user);
                     watchedPush = await _watchedSync.PushAsync(user.Id, accessToken, snapshot, effectiveAllowRemovals, cancellationToken).ConfigureAwait(false);
