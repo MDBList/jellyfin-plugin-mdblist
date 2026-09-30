@@ -125,6 +125,7 @@ public class WatchedSync
             }
 
             await _payloadBuilder.PushItemsAsync(userId, Category, accessToken, Endpoint, FieldName, [item], GetWatchedAtValue, cancellationToken).ConfigureAwait(false);
+            _logger.LogDebug("MDBList Sync: live push marked {Item} watched", Describe(record));
             return PushOutcome.Added;
         }
 
@@ -134,6 +135,7 @@ public class WatchedSync
         }
 
         await _payloadBuilder.PushItemsRemoveAsync(userId, Category, accessToken, RemoveEndpoint, [knownItem], cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("MDBList Sync: live push marked {Item} unwatched", Describe(record));
         return PushOutcome.Removed;
     }
 
@@ -334,6 +336,14 @@ public class WatchedSync
         var candidateRemovals = locallyWatched.Where(w => !matchedKeys.Contains(w.Key)).ToList();
         var holdRemovals = candidateRemovals.Count > 0
             && ShouldHoldPullRemovals(data.Movies.Count + data.Episodes.Count, candidateRemovals.Count, locallyWatched.Count, trusted);
+
+        if (holdRemovals)
+        {
+            foreach (var (record, _) in candidateRemovals)
+            {
+                _logger.LogDebug("MDBList Sync: watched pull held removal of {Item} - watched in Jellyfin, not on MDBList", Describe(record));
+            }
+        }
 
         if (candidateRemovals.Count > 0 && !holdRemovals)
         {
@@ -706,6 +716,11 @@ public class WatchedSync
     private static string NowIso()
     {
         return DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
+    }
+
+    private static string Describe(SnapshotItem record)
+    {
+        return $"{record.Type} '{record.Title}' ({CanonicalKey(record)})";
     }
 
     private static string? CanonicalKey(SnapshotItem record)
