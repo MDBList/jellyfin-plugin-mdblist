@@ -232,8 +232,10 @@ public sealed class SyncOrchestrator : IDisposable
                 {
                     // First sync: pull first so the push only sends what MDBList
                     // doesn't already have -- see WatchedSync.SeedPullAsync. The
-                    // push is a membership diff, so the snapshot needn't be re-read.
+                    // push diffs LastPlayedDate too, so it needs the snapshot
+                    // re-read after the pull wrote to user data.
                     watchedPull = await _watchedSync.SeedPullAsync(user.Id, accessToken, user, snapshot, activities.ServerTime, cancellationToken).ConfigureAwait(false);
+                    snapshot = LibrarySnapshot.Build(_libraryManager, _userDataManager, user);
                     watchedPush = await _watchedSync.PushAsync(user.Id, accessToken, snapshot, effectiveAllowRemovals, cancellationToken).ConfigureAwait(false);
                 }
                 else
