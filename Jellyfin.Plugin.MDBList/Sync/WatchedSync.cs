@@ -194,7 +194,9 @@ public class WatchedSync
         if (string.IsNullOrEmpty(since))
         {
             _logger.LogDebug("MDBList Sync: watched pull for user {UserName} has no cursor - running full pull", user.Username);
-            return await PullFullAsync(userId, accessToken, user, snapshot, serverTime, trusted, cancellationToken).ConfigureAwait(false);
+            // Never synced: anything watched only locally just hasn't been
+            // pushed yet, so this is a seed pull too -- no removal reconcile.
+            return await PullFullAsync(userId, accessToken, user, snapshot, serverTime, trusted: false, cancellationToken, seed: true).ConfigureAwait(false);
         }
 
         if (trusted && await _stateStore.GetFullReconcilePendingAsync(userId, Category, cancellationToken).ConfigureAwait(false))
