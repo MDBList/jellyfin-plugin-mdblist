@@ -105,6 +105,19 @@ public sealed class SyncOrchestrator : IDisposable
     }
 
     /// <summary>
+    /// Waits for the sync lock -- for a live push that arrives while a sync
+    /// holds it, which would otherwise be lost until the next full run.
+    /// </summary>
+    /// <param name="timeout">How long to wait before giving up.</param>
+    /// <returns>
+    /// A disposable that releases the lock; null if it wasn't free in time.
+    /// </returns>
+    public async Task<IDisposable?> WaitLockAsync(TimeSpan timeout)
+    {
+        return await _gate.WaitAsync(timeout).ConfigureAwait(false) ? new Releaser(_gate) : null;
+    }
+
+    /// <summary>
     /// Full run for one linked user: rebuilds the library snapshot
     /// unconditionally and does push-then-pull for every enabled category.
     /// The expensive path -- covers pushing anything the live listener
