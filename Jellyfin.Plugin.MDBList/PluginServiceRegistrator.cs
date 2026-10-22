@@ -23,6 +23,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<WatchedSync>();
         serviceCollection.AddSingleton<RatingsSync>();
         serviceCollection.AddSingleton<CollectionSync>();
+        serviceCollection.AddSingleton<Library.MediaInfoReader>();
         serviceCollection.AddSingleton<LiveSyncService>();
         serviceCollection.AddSingleton<LibraryChangeDebouncer>();
         serviceCollection.AddSingleton<PlaybackScrobbleService>();

@@ -49,6 +49,11 @@
                         <span>Collection membership</span>
                     </label>
                     <label class="emby-checkbox-label">
+                        <input is="emby-checkbox" type="checkbox" id="chkCollectionMedia" />
+                        <span>Also send media info (resolution, HDR, audio)</span>
+                    </label>
+                    <div class="fieldDescription">Sends each collected item's media info. Off by default: it makes syncs slower on big libraries.</div>
+                    <label class="emby-checkbox-label">
                         <input is="emby-checkbox" type="checkbox" id="chkScrobbling" />
                         <span>Live scrobbling</span>
                     </label>
@@ -105,6 +110,7 @@
                 page.querySelector('#chkWatched').checked = !userConfig || userConfig.WatchedEnabled !== false;
                 page.querySelector('#chkRatings').checked = !userConfig || userConfig.RatingsEnabled !== false;
                 page.querySelector('#chkCollection').checked = !userConfig || userConfig.CollectionEnabled !== false;
+                page.querySelector('#chkCollectionMedia').checked = !!(userConfig && userConfig.CollectionMediaInfoEnabled);
                 page.querySelector('#chkScrobbling').checked = !userConfig || userConfig.ScrobblingEnabled !== false;
                 page.querySelector('#chkIgnoreThumbs').checked = !userConfig || userConfig.IgnoreThumbRatings !== false;
                 page.querySelector('#chkSyncAfterScan').checked = !userConfig || userConfig.SyncAfterLibraryScan !== false;
@@ -265,6 +271,7 @@
                     userConfig.WatchedEnabled = page.querySelector('#chkWatched').checked;
                     userConfig.RatingsEnabled = page.querySelector('#chkRatings').checked;
                     userConfig.CollectionEnabled = page.querySelector('#chkCollection').checked;
+                    userConfig.CollectionMediaInfoEnabled = page.querySelector('#chkCollectionMedia').checked;
                     userConfig.ScrobblingEnabled = page.querySelector('#chkScrobbling').checked;
                     userConfig.IgnoreThumbRatings = page.querySelector('#chkIgnoreThumbs').checked;
                     userConfig.SyncAfterLibraryScan = page.querySelector('#chkSyncAfterScan').checked;

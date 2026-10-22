@@ -60,6 +60,13 @@ public class UserSyncConfig
     public bool CollectionEnabled { get; set; } = true;
 
     /// <summary>
+    /// Gets or sets a value indicating whether collection pushes also send each
+    /// item's media info (resolution, HDR, audio). Off by default: reading it
+    /// costs database queries per item on every sync run.
+    /// </summary>
+    public bool CollectionMediaInfoEnabled { get; set; }
+
+    /// <summary>
     /// Gets or sets a value indicating whether a full sync run should follow
     /// a completed library scan -- port of Kodi's <c>sync.on_library_scan</c>
     /// setting. <see cref="Events.LibraryChangeDebouncer"/> already reacts to

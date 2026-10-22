@@ -116,6 +116,8 @@ public class LibrarySnapshot
                 LastPlayedDate = userData?.LastPlayedDate,
                 Rating = userData?.Rating,
                 DateCreated = item.DateCreated,
+                DateLastSaved = item.DateLastSaved,
+                DateModified = item.DateModified,
             };
 
             _movies.Add(record);
@@ -184,6 +186,8 @@ public class LibrarySnapshot
                     LastPlayedDate = userData?.LastPlayedDate,
                     Rating = userData?.Rating,
                     DateCreated = episode.DateCreated,
+                    DateLastSaved = episode.DateLastSaved,
+                    DateModified = episode.DateModified,
                 };
 
                 _episodes.Add(record);

@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using Jellyfin.Plugin.MDBList.Api.Models;
+using Jellyfin.Plugin.MDBList.Library;
 
 namespace Jellyfin.Plugin.MDBList.Sync;
 
@@ -52,4 +54,12 @@ public class KnownSyncItem
     /// Gets or sets when this item was collected (collection category only).
     /// </summary>
     public string? CollectedAt { get; set; }
+
+    /// <summary>
+    /// Gets or sets the media info of the item's versions (collection category
+    /// only), stored so a quality change re-pushes the item. Null in state
+    /// written before media info existed, which re-pushes it once.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<MediaCopy>? Copies { get; set; }
 }

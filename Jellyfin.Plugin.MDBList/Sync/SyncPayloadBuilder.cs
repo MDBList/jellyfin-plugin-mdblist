@@ -71,6 +71,7 @@ public class SyncPayloadBuilder
     /// <param name="items">The items to push.</param>
     /// <param name="getValue">Extracts the value to send for one item.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="addFields">Optional: adds further fields to an item's entry (e.g. collection media info).</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     public async Task PushItemsAsync(
         Guid userId,
@@ -80,7 +81,8 @@ public class SyncPayloadBuilder
         string fieldName,
         IReadOnlyCollection<KnownSyncItem> items,
         Func<KnownSyncItem, JsonNode?> getValue,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<KnownSyncItem, JsonObject>? addFields = null)
     {
         var movieEntries = items.Where(item => item.Type == "movie").ToList();
         foreach (var batch in Chunk(movieEntries))
@@ -90,6 +92,7 @@ public class SyncPayloadBuilder
             {
                 var entry = new JsonObject { ["ids"] = SerializeIds(item.Ids) };
                 entry[fieldName] = getValue(item);
+                addFields?.Invoke(item, entry);
                 movies.Add(entry);
             }
 
@@ -101,7 +104,7 @@ public class SyncPayloadBuilder
         var episodeEntries = items.Where(item => item.Type == "episode").ToList();
         foreach (var batch in Chunk(episodeEntries))
         {
-            var shows = BuildShowsPayload(batch, fieldName, getValue);
+            var shows = BuildShowsPayload(batch, fieldName, getValue, addFields);
             await _apiClient.PushSyncItemsAsync(accessToken, endpoint, new JsonObject { ["shows"] = shows }, cancellationToken)
                 .ConfigureAwait(false);
             await PersistPushedChunkAsync(userId, category, batch, cancellationToken).ConfigureAwait(false);
@@ -211,8 +214,8 @@ public class SyncPayloadBuilder
     /// <param name="pushRemove">Called with newly-removed items to push (see <paramref name="pushAdd"/>).</param>
     /// <param name="valueChanged">
     /// Optional: also add an item whose key is already known but whose value
-    /// differs (e.g. a rating change or updated watch date) -- membership-only
-    /// categories (collection) leave this null.
+    /// differs (e.g. a rating change, an updated watch date, or a collected
+    /// item's media info -- see CollectionSync.MediaChanged).
     /// </param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <param name="allowRemovals">
@@ -337,8 +340,13 @@ public class SyncPayloadBuilder
     /// <param name="episodeItems">The episode items to group.</param>
     /// <param name="fieldName">The wire field name for the value, or null for removals.</param>
     /// <param name="getValue">Extracts the value to send for one item, or null for removals.</param>
+    /// <param name="addFields">Optional: adds further fields to an episode's entry.</param>
     /// <returns>The "shows" array.</returns>
-    internal static JsonArray BuildShowsPayload(IReadOnlyCollection<KnownSyncItem> episodeItems, string? fieldName, Func<KnownSyncItem, JsonNode?>? getValue)
+    internal static JsonArray BuildShowsPayload(
+        IReadOnlyCollection<KnownSyncItem> episodeItems,
+        string? fieldName,
+        Func<KnownSyncItem, JsonNode?>? getValue,
+        Action<KnownSyncItem, JsonObject>? addFields = null)
     {
         var showsByKey = new Dictionary<string, (JsonNode Ids, Dictionary<int, JsonArray> Seasons)>(StringComparer.Ordinal);
         var order = new List<string>();
@@ -377,6 +385,7 @@ public class SyncPayloadBuilder
                 entry[fieldName] = getValue(item);
             }
 
+            addFields?.Invoke(item, entry);
             episodes.Add(entry);
         }
 

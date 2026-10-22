@@ -292,7 +292,7 @@ public sealed class SyncOrchestrator : IDisposable
             var collectionSummary = "collection skipped";
             if (config.CollectionEnabled)
             {
-                var collectionPush = await _collectionSync.PushAsync(user.Id, accessToken, snapshot, effectiveAllowRemovals, cancellationToken).ConfigureAwait(false);
+                var collectionPush = await _collectionSync.PushAsync(user.Id, accessToken, snapshot, effectiveAllowRemovals, config.CollectionMediaInfoEnabled, cancellationToken).ConfigureAwait(false);
                 collectionSummary = string.Format(
                     CultureInfo.InvariantCulture,
                     "collection push +{0}/-{1}{2}",
