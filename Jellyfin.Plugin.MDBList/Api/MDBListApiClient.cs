@@ -207,8 +207,21 @@ public class MDBListApiClient
                 query["since"] = since;
             }
 
-            var page = await RequestAsync<JournalPage>(accessToken, HttpMethod.Get, "/sync/journal", query, null, cancellationToken)
-                .ConfigureAwait(false);
+            JournalPage? page;
+            try
+            {
+                page = await RequestAsync<JournalPage>(accessToken, HttpMethod.Get, "/sync/journal", query, null, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (MDBListApiException ex) when (ex.StatusCode == HttpStatusCode.Conflict)
+            {
+                // MDBList answers an expired window with a 409 carrying
+                // requires_full_sync, not a 200
+                result.RequiresFullSync = true;
+                result.Entries.Clear();
+                return result;
+            }
+
             if (page is null)
             {
                 break;
