@@ -241,10 +241,14 @@ public class MDBListApiClient
     /// <param name="endpoint">The endpoint path, e.g. "/sync/watched" or "/sync/watched/remove".</param>
     /// <param name="payload">The payload to serialize as the request body.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="retryRateLimit">
+    /// Whether a 429 is waited out and retried; false throws it straight
+    /// away, for pushes whose payload is stale by the time a retry lands.
+    /// </param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    public async Task PushSyncItemsAsync(string accessToken, string endpoint, object payload, CancellationToken cancellationToken)
+    public async Task PushSyncItemsAsync(string accessToken, string endpoint, object payload, CancellationToken cancellationToken, bool retryRateLimit = true)
     {
-        await RequestRawAsync(accessToken, HttpMethod.Post, endpoint, null, payload, cancellationToken).ConfigureAwait(false);
+        await RequestRawAsync(accessToken, HttpMethod.Post, endpoint, null, payload, cancellationToken, retryRateLimit).ConfigureAwait(false);
     }
 
     private async Task<T?> RequestAsync<T>(
@@ -273,7 +277,8 @@ public class MDBListApiClient
         string endpoint,
         IDictionary<string, string?>? query,
         object? jsonBody,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool retryRateLimit = true)
     {
         if (string.IsNullOrEmpty(accessToken))
         {
@@ -339,14 +344,15 @@ public class MDBListApiClient
 
                 if (response.StatusCode == HttpStatusCode.TooManyRequests)
                 {
-                    var retryAfter = response.Headers.RetryAfter?.Delta ?? DefaultRetryAfterDelay;
-                    if (attempt < MaxRateLimitRetries && retryAfter <= MaxAutoRetryDelay)
+                    var serverRetryAfter = response.Headers.RetryAfter?.Delta;
+                    var retryAfter = serverRetryAfter ?? DefaultRetryAfterDelay;
+                    if (retryRateLimit && attempt < MaxRateLimitRetries && retryAfter <= MaxAutoRetryDelay)
                     {
                         await Task.Delay(retryAfter, cancellationToken).ConfigureAwait(false);
                         continue;
                     }
 
-                    throw new MDBListApiException($"API Error 429: {truncated}", HttpStatusCode.TooManyRequests, retryAfter);
+                    throw new MDBListApiException($"API Error 429: {truncated}", HttpStatusCode.TooManyRequests, serverRetryAfter);
                 }
 
                 throw new MDBListApiException($"API Error {(int)response.StatusCode}: {truncated}", response.StatusCode, retryAfter: null);

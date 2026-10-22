@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
@@ -41,10 +42,18 @@ public sealed class PlaybackScrobbleService
     // playback session would hit /scrobble/start once a second.
     private static readonly TimeSpan MinProgressInterval = TimeSpan.FromSeconds(15);
 
+    // How long periodic progress pushes pause for a user after a 429 that
+    // carries no Retry-After.
+    private static readonly TimeSpan RateLimitPause = TimeSpan.FromMinutes(10);
+
     private readonly OAuthService _oauthService;
     private readonly MDBListApiClient _apiClient;
     private readonly ILogger<PlaybackScrobbleService> _logger;
     private readonly ConcurrentDictionary<string, SessionState> _sessions = new(StringComparer.Ordinal);
+
+    // Per user: periodic progress pushes are skipped until this time after a
+    // 429, rather than spending more of an exhausted quota every tick.
+    private readonly ConcurrentDictionary<Guid, DateTime> _pausedUntil = new();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlaybackScrobbleService"/> class.
@@ -74,8 +83,9 @@ public sealed class PlaybackScrobbleService
         // Recorded synchronously, before the send below even runs: the
         // automated progress timer can tick again within a second, and it
         // must see "just sent" immediately, not race the async send.
-        _sessions[key] = new SessionState { LastSentAt = DateTime.UtcNow };
-        Dispatch(e, StartEndpoint, playedToCompletion: false);
+        var state = new SessionState { LastSentAt = DateTime.UtcNow };
+        _sessions[key] = state;
+        Dispatch(e, StartEndpoint, playedToCompletion: false, state);
     }
 
     /// <summary>
@@ -109,6 +119,13 @@ public sealed class PlaybackScrobbleService
         var resuming = state.WasPaused;
         state.WasPaused = false;
 
+        // MDBList answered 404 for this title: re-sending it every tick
+        // won't change that before the playback ends
+        if (!resuming && state.TitleUnknown)
+        {
+            return;
+        }
+
         var now = DateTime.UtcNow;
         if (!resuming && now - state.LastSentAt < MinProgressInterval)
         {
@@ -116,7 +133,7 @@ public sealed class PlaybackScrobbleService
         }
 
         state.LastSentAt = now;
-        Dispatch(e, StartEndpoint, playedToCompletion: false);
+        Dispatch(e, StartEndpoint, playedToCompletion: false, state, periodic: !resuming);
     }
 
     /// <summary>
@@ -141,14 +158,20 @@ public sealed class PlaybackScrobbleService
         return e.PlaySessionId ?? e.Session?.Id;
     }
 
-    private void Dispatch(PlaybackProgressEventArgs e, string endpoint, bool playedToCompletion)
+    private void Dispatch(PlaybackProgressEventArgs e, string endpoint, bool playedToCompletion, SessionState? state = null, bool periodic = false)
     {
-        _ = Task.Run(() => SendAsync(e, endpoint, playedToCompletion));
+        _ = Task.Run(() => SendAsync(e, endpoint, playedToCompletion, state, periodic));
     }
 
-    private async Task SendAsync(PlaybackProgressEventArgs e, string endpoint, bool playedToCompletion)
+    private async Task SendAsync(PlaybackProgressEventArgs e, string endpoint, bool playedToCompletion, SessionState? state, bool periodic)
     {
         var userIds = ResolveScrobblingLinkedUserIds(e.Users);
+        if (periodic)
+        {
+            var now = DateTime.UtcNow;
+            userIds.RemoveAll(id => _pausedUntil.TryGetValue(id, out var until) && now < until);
+        }
+
         if (userIds.Count == 0)
         {
             return;
@@ -165,11 +188,11 @@ public sealed class PlaybackScrobbleService
         // just the first one found overall.
         foreach (var userId in userIds)
         {
-            await SendForUserAsync(userId, endpoint, request).ConfigureAwait(false);
+            await SendForUserAsync(userId, endpoint, request, state).ConfigureAwait(false);
         }
     }
 
-    private async Task SendForUserAsync(Guid userId, string endpoint, ScrobbleRequest request)
+    private async Task SendForUserAsync(Guid userId, string endpoint, ScrobbleRequest request, SessionState? state)
     {
         try
         {
@@ -179,10 +202,22 @@ public sealed class PlaybackScrobbleService
                 return;
             }
 
-            await _apiClient.PushSyncItemsAsync(accessToken, endpoint, request, CancellationToken.None).ConfigureAwait(false);
+            // Only a stop is worth waiting out a 429 for (it can be what
+            // marks the title watched); a start/pause would land stale, and
+            // possibly after a later stop
+            await _apiClient.PushSyncItemsAsync(accessToken, endpoint, request, CancellationToken.None, retryRateLimit: endpoint == StopEndpoint).ConfigureAwait(false);
         }
         catch (MDBListApiException ex)
         {
+            if (ex.IsRateLimited)
+            {
+                _pausedUntil[userId] = DateTime.UtcNow + (ex.RetryAfter ?? RateLimitPause);
+            }
+            else if (ex.StatusCode == HttpStatusCode.NotFound && endpoint == StartEndpoint && state is not null)
+            {
+                state.TitleUnknown = true;
+            }
+
             _logger.LogDebug(ex, "MDBList scrobble push to {Endpoint} failed for user {UserId}", endpoint, userId);
         }
     }
@@ -290,6 +325,8 @@ public sealed class PlaybackScrobbleService
     private sealed class SessionState
     {
         public bool WasPaused { get; set; }
+
+        public bool TitleUnknown { get; set; }
 
         public DateTime LastSentAt { get; set; } = DateTime.MinValue;
     }
