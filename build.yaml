@@ -1,7 +1,7 @@
 ---
 name: "MDBList"
 guid: "cbca79d7-ecde-4030-833c-3862f3c3a737"
-version: "1.0.0.16"
+version: "1.0.0.17"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 overview: "Two-way sync of watched status and ratings, plus collection sync, against MDBList"
@@ -15,6 +15,14 @@ owner: "linaspurinis"
 artifacts:
 - "Jellyfin.Plugin.MDBList.dll"
 changelog: >
+  1.0.0.17: New: optionally send your files' media info (resolution, HDR,
+  audio, channels, 3D) with collection sync, per user and off by default.
+  Progress scrobbles now pause when MDBList's rate limit is hit, until it
+  resets, and stop for a playback whose title MDBList doesn't recognize.
+  Fixed every sync failing once the plugin hadn't synced for 30 days; it
+  now runs a full sync instead.
+
+
   1.0.0.16: Fixed the first watched sync sending the whole Jellyfin
   history to MDBList if something was marked watched before it ran, and
   watched changes made during a sync (e.g. marking a whole season) being
