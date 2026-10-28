@@ -15,7 +15,8 @@ an equivalent Kodi addon.
 - Two-way watched-status sync
 - Two-way ratings sync
 - Collection/library push (Jellyfin → MDBList)
-- Live playback scrobbling
+- Live playback scrobbling: start, pause, resume, seek and stop are sent
+  right away, plus the current progress every 15 minutes while playing
 - Incremental, cursor-based sync with automatic full-reconciliation fallback
 - A 24h scheduled full sync plus a 15-minute activity-gated cheap poll
 - Per-category toggles, and a "sync after library scan" option
