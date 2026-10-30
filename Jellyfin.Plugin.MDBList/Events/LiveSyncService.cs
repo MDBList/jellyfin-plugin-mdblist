@@ -123,10 +123,26 @@ public class LiveSyncService
             return;
         }
 
-        _ = Task.Run(() => HandleAsync(e.UserId, e.Item, e.UserData, pushWatched, pushRating));
+        // Taken now, not in the background task: that may wait out a sync
+        // first, and this save is the moment the playback ended
+        DateTime? finishedAt = pushWatched && e.SaveReason == UserDataSaveReason.PlaybackFinished ? DateTime.UtcNow : null;
+        _ = Task.Run(() => HandleAsync(e.UserId, e.Item, e.UserData, pushWatched, pushRating, finishedAt));
     }
 
-    private async Task HandleAsync(Guid userId, BaseItem item, UserItemData userData, bool pushWatched, bool pushRating)
+    /// <summary>
+    /// Whether a <c>PlaybackFinished</c> save is a play to completion:
+    /// Jellyfin resets the resume position to 0 and marks the item played
+    /// then, while a stop partway through keeps the position.
+    /// </summary>
+    /// <param name="played">The item's saved played flag.</param>
+    /// <param name="positionTicks">The item's saved resume position.</param>
+    /// <returns>True when the playback ran to completion.</returns>
+    internal static bool IsPlayedToCompletion(bool played, long positionTicks)
+    {
+        return played && positionTicks == 0;
+    }
+
+    private async Task HandleAsync(Guid userId, BaseItem item, UserItemData userData, bool pushWatched, bool pushRating, DateTime? finishedAt)
     {
         var handle = _orchestrator.TryLock();
         if (handle is null)
@@ -160,6 +176,11 @@ public class LiveSyncService
         using var heldLock = handle;
         try
         {
+            if (finishedAt.HasValue && IsPlayedToCompletion(userData.Played, userData.PlaybackPositionTicks))
+            {
+                userData = StampFinishedAt(userId, item, userData, finishedAt.Value);
+            }
+
             var record = BuildRecord(item, userData);
             if (record is null)
             {
@@ -186,6 +207,39 @@ public class LiveSyncService
         {
             _logger.LogDebug(ex, "MDBList live push failed");
         }
+    }
+
+    /// <summary>
+    /// Jellyfin sets <c>LastPlayedDate</c> when playback starts and leaves
+    /// it there when it finishes, so the watch would land on MDBList at the
+    /// start time. It's moved to when the playback finished, in Jellyfin
+    /// too: the full sync pushes <c>LastPlayedDate</c>, and a push of the
+    /// start time after this one would read as a second, earlier play.
+    /// </summary>
+    /// <param name="userId">The Jellyfin user id.</param>
+    /// <param name="item">The item that finished playing.</param>
+    /// <param name="userData">The item's user data as saved.</param>
+    /// <param name="finishedAt">When the playback finished.</param>
+    /// <returns>The item's user data with the finish time, as Jellyfin stored it.</returns>
+    private UserItemData StampFinishedAt(Guid userId, BaseItem item, UserItemData userData, DateTime finishedAt)
+    {
+        var user = _userManager.GetUserById(userId);
+        if (user is null)
+        {
+            return userData;
+        }
+
+        // A fresh copy, not the event's object Jellyfin may still hold
+        var data = _userDataManager.GetUserData(user, item) ?? userData;
+
+        // Whole seconds, MDBList's precision, so the stored value and the
+        // pushed one compare equal on the next full sync
+        data.LastPlayedDate = new DateTime(finishedAt.Ticks - (finishedAt.Ticks % TimeSpan.TicksPerSecond), DateTimeKind.Utc);
+
+        // Saved as Import, which this service ignores above, so it doesn't
+        // come back here as another push
+        _userDataManager.SaveUserData(user, item, data, UserDataSaveReason.Import, CancellationToken.None);
+        return _userDataManager.GetUserData(user, item) ?? data;
     }
 
     private static SnapshotItem? BuildRecord(BaseItem item, UserItemData userData)
