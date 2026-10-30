@@ -12,7 +12,8 @@ an equivalent Kodi addon.
 
 ## Features
 
-- Two-way watched-status sync
+- Two-way watched-status sync; a movie or episode played to the end is
+  marked watched at the time playback finished, not when it started
 - Two-way ratings sync
 - Collection/library push (Jellyfin → MDBList)
 - Live playback scrobbling: start, pause, resume, seek and stop are sent
