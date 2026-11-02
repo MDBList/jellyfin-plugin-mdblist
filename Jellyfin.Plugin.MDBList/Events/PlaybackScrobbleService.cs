@@ -80,6 +80,11 @@ public sealed class PlaybackScrobbleService
     /// <param name="e">The event args.</param>
     public void HandlePlaybackStart(PlaybackProgressEventArgs e)
     {
+        if (!IsScrobblable(e.Item))
+        {
+            return;
+        }
+
         var key = SessionKey(e);
         if (key is null)
         {
@@ -102,6 +107,11 @@ public sealed class PlaybackScrobbleService
     /// <param name="e">The event args.</param>
     public void HandlePlaybackProgress(PlaybackProgressEventArgs e)
     {
+        if (!IsScrobblable(e.Item))
+        {
+            return;
+        }
+
         var key = SessionKey(e);
         if (key is null)
         {
@@ -152,6 +162,11 @@ public sealed class PlaybackScrobbleService
     /// <param name="e">The event args.</param>
     public void HandlePlaybackStopped(PlaybackStopEventArgs e)
     {
+        if (!IsScrobblable(e.Item))
+        {
+            return;
+        }
+
         var key = SessionKey(e);
         if (key is not null)
         {
@@ -168,12 +183,23 @@ public sealed class PlaybackScrobbleService
 
     private void Dispatch(PlaybackProgressEventArgs e, string endpoint, bool playedToCompletion, SessionState? state = null, bool periodic = false)
     {
-        _ = Task.Run(() => SendAsync(e, endpoint, playedToCompletion, state, periodic));
+        _logger.LogInformation("MDBList: Dispatching scrobble {Endpoint} for item '{Item}'", endpoint, e.Item?.Name);
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await SendAsync(e, endpoint, playedToCompletion, state, periodic).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "MDBList: Error in scrobble dispatch for {Endpoint}", endpoint);
+            }
+        });
     }
 
     private async Task SendAsync(PlaybackProgressEventArgs e, string endpoint, bool playedToCompletion, SessionState? state, bool periodic)
     {
-        var userIds = ResolveScrobblingLinkedUserIds(e.Users);
+        var userIds = ResolveScrobblingLinkedUserIds(e);
         if (periodic)
         {
             var now = DateTime.UtcNow;
@@ -182,6 +208,7 @@ public sealed class PlaybackScrobbleService
 
         if (userIds.Count == 0)
         {
+            _logger.LogInformation("MDBList: No linked users found for scrobble push");
             return;
         }
 
@@ -196,11 +223,11 @@ public sealed class PlaybackScrobbleService
         // just the first one found overall.
         foreach (var userId in userIds)
         {
-            await SendForUserAsync(userId, endpoint, request, state).ConfigureAwait(false);
+            await SendForUserAsync(userId, endpoint, request, state, e.Item?.Name).ConfigureAwait(false);
         }
     }
 
-    private async Task SendForUserAsync(Guid userId, string endpoint, ScrobbleRequest request, SessionState? state)
+    private async Task SendForUserAsync(Guid userId, string endpoint, ScrobbleRequest request, SessionState? state, string? itemName)
     {
         try
         {
@@ -214,6 +241,7 @@ public sealed class PlaybackScrobbleService
             // marks the title watched); a start/pause would land stale, and
             // possibly after a later stop
             await _apiClient.PushSyncItemsAsync(accessToken, endpoint, request, CancellationToken.None, retryRateLimit: endpoint == StopEndpoint).ConfigureAwait(false);
+            _logger.LogInformation("MDBList: Scrobble push {Endpoint} succeeded for user {UserId} (item '{Item}')", endpoint, userId, itemName);
         }
         catch (MDBListApiException ex)
         {
@@ -226,11 +254,11 @@ public sealed class PlaybackScrobbleService
                 state.TitleUnknown = true;
             }
 
-            _logger.LogDebug(ex, "MDBList scrobble push to {Endpoint} failed for user {UserId}", endpoint, userId);
+            _logger.LogWarning(ex, "MDBList scrobble push to {Endpoint} failed for user {UserId}", endpoint, userId);
         }
     }
 
-    private static List<Guid> ResolveScrobblingLinkedUserIds(IReadOnlyList<User> sessionUsers)
+    private static List<Guid> ResolveScrobblingLinkedUserIds(PlaybackProgressEventArgs e)
     {
         var linkedUsers = Plugin.Instance?.Configuration.Users;
         if (linkedUsers is null || linkedUsers.Count == 0)
@@ -239,13 +267,50 @@ public sealed class PlaybackScrobbleService
         }
 
         var result = new List<Guid>();
-        foreach (var sessionUser in sessionUsers)
+
+        if (e.Session is { } session && session.UserId != Guid.Empty)
         {
-            var config = linkedUsers.FirstOrDefault(u => u.JellyfinUserId == sessionUser.Id);
+            var config = linkedUsers.FirstOrDefault(u => u.JellyfinUserId == session.UserId);
             if (config is not null && config.ScrobblingEnabled)
             {
-                result.Add(sessionUser.Id);
+                result.Add(session.UserId);
             }
+
+            if (session.AdditionalUsers is not null)
+            {
+                foreach (var additional in session.AdditionalUsers)
+                {
+                    var addConfig = linkedUsers.FirstOrDefault(u => u.JellyfinUserId == additional.UserId);
+                    if (addConfig is not null && addConfig.ScrobblingEnabled && !result.Contains(additional.UserId))
+                    {
+                        result.Add(additional.UserId);
+                    }
+                }
+            }
+
+            if (result.Count > 0)
+            {
+                return result;
+            }
+        }
+
+        try
+        {
+            if (e.Users is not null)
+            {
+                foreach (var sessionUser in e.Users)
+                {
+                    var config = linkedUsers.FirstOrDefault(u => u.JellyfinUserId == sessionUser.Id);
+                    if (config is not null && config.ScrobblingEnabled && !result.Contains(sessionUser.Id))
+                    {
+                        result.Add(sessionUser.Id);
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Fallback gracefully if e.Users throws a TypeLoad/MissingMethod exception on newer server builds
         }
 
         return result;
@@ -258,7 +323,7 @@ public sealed class PlaybackScrobbleService
             return null;
         }
 
-        var progress = playedToCompletion ? 100.0 : ComputeProgress(item.RunTimeTicks, positionTicks);
+        var progress = playedToCompletion ? 100.0 : ComputeProgress(item.RunTimeTicks, positionTicks ?? 0);
         if (progress is null)
         {
             return null;
@@ -317,6 +382,21 @@ public sealed class PlaybackScrobbleService
         }
 
         return null;
+    }
+
+    internal static bool IsScrobblable(BaseItem? item)
+    {
+        if (item is not (Movie or Episode))
+        {
+            return false;
+        }
+
+        if (item.ExtraType is not null)
+        {
+            return false;
+        }
+
+        return true;
     }
 
     /// <summary>
