@@ -23,7 +23,9 @@ an equivalent Kodi addon.
 - Per-category toggles, and a "sync after library scan" option
 - An item Jellyfin can't save watched status or a rating for is skipped
   with a warning in the log (naming the item and its user data keys), and
-  the rest of the sync carries on; it's retried on the next sync
+  the rest of the sync carries on. That item stays out of sync until it's
+  changed again after its metadata is fixed, or until a full reconciliation
+  (e.g. after reconnecting the account)
 
 ## Installing
 
