@@ -80,6 +80,11 @@ public sealed class PlaybackScrobbleService
     /// <param name="e">The event args.</param>
     public void HandlePlaybackStart(PlaybackProgressEventArgs e)
     {
+        if (!IsScrobblable(e.Item))
+        {
+            return;
+        }
+
         var key = SessionKey(e);
         if (key is null)
         {
@@ -107,6 +112,11 @@ public sealed class PlaybackScrobbleService
     /// <param name="e">The event args.</param>
     public void HandlePlaybackProgress(PlaybackProgressEventArgs e)
     {
+        if (!IsScrobblable(e.Item))
+        {
+            return;
+        }
+
         var key = SessionKey(e);
         if (key is null)
         {
@@ -157,6 +167,13 @@ public sealed class PlaybackScrobbleService
     /// <param name="e">The event args.</param>
     public void HandlePlaybackStopped(PlaybackStopEventArgs e)
     {
+        // Also keeps a pre-roll's stop, which can arrive after the feature has
+        // started on the same session, from dropping the feature's state
+        if (!IsScrobblable(e.Item))
+        {
+            return;
+        }
+
         var key = SessionKey(e);
         if (key is not null)
         {
@@ -323,6 +340,19 @@ public sealed class PlaybackScrobbleService
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Whether a playback is one MDBList can scrobble: a movie or episode,
+    /// not an extra (trailer, clip, ...) or a pre-roll (cinema mode intros
+    /// play as plain videos or trailers). Others are ignored before they
+    /// touch session state.
+    /// </summary>
+    /// <param name="item">The item being played.</param>
+    /// <returns>True for a movie or episode that isn't an extra.</returns>
+    internal static bool IsScrobblable(BaseItem? item)
+    {
+        return item is Movie or Episode && item.ExtraType is null;
     }
 
     /// <summary>
