@@ -273,6 +273,12 @@ public sealed class PlaybackScrobbleService
                 itemName,
                 userId);
         }
+        catch (Exception ex) when (ex is not MDBListApiException)
+        {
+            // E.g. an HttpClient timeout or a failed token refresh: caught per
+            // user so the session's other users still get this scrobble
+            _logger.LogWarning(ex, "MDBList scrobble {Endpoint} for {Item} failed for user {UserId}", endpoint, itemName, userId);
+        }
     }
 
     private static List<Guid> ResolveScrobblingLinkedUserIds(IReadOnlyList<User> sessionUsers)
