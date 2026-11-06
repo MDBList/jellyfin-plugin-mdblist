@@ -21,6 +21,9 @@ an equivalent Kodi addon.
 - Incremental, cursor-based sync with automatic full-reconciliation fallback
 - A 24h scheduled full sync plus a 15-minute activity-gated cheap poll
 - Per-category toggles, and a "sync after library scan" option
+- An item Jellyfin can't save watched status or a rating for is skipped
+  with a warning in the log (naming the item and its user data keys), and
+  the rest of the sync carries on; it's retried on the next sync
 
 ## Installing
 
