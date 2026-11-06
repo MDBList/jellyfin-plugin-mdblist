@@ -86,12 +86,17 @@ public sealed class PlaybackScrobbleService
             return;
         }
 
+        // Clients starting from the beginning report no position: that's 0.
+        // Left null, no progress could be computed, the start wasn't sent, and
+        // the throttle then held every push back for MinProgressInterval.
+        var positionTicks = e.PlaybackPositionTicks ?? 0;
+
         // Recorded synchronously, before the send below even runs: the
         // automated progress timer can tick again within a second, and it
         // must see "just sent" immediately, not race the async send.
-        var state = new SessionState { LastSentAt = DateTime.UtcNow, LastSentPositionTicks = e.PlaybackPositionTicks };
+        var state = new SessionState { LastSentAt = DateTime.UtcNow, LastSentPositionTicks = positionTicks };
         _sessions[key] = state;
-        Dispatch(e, StartEndpoint, playedToCompletion: false, state);
+        Dispatch(e, StartEndpoint, playedToCompletion: false, state, positionTicks: positionTicks);
     }
 
     /// <summary>
@@ -166,12 +171,13 @@ public sealed class PlaybackScrobbleService
         return e.PlaySessionId ?? e.Session?.Id;
     }
 
-    private void Dispatch(PlaybackProgressEventArgs e, string endpoint, bool playedToCompletion, SessionState? state = null, bool periodic = false)
+    // positionTicks: the position to send, when not the event's own
+    private void Dispatch(PlaybackProgressEventArgs e, string endpoint, bool playedToCompletion, SessionState? state = null, bool periodic = false, long? positionTicks = null)
     {
-        _ = Task.Run(() => SendAsync(e, endpoint, playedToCompletion, state, periodic));
+        _ = Task.Run(() => SendAsync(e, endpoint, playedToCompletion, state, periodic, positionTicks ?? e.PlaybackPositionTicks));
     }
 
-    private async Task SendAsync(PlaybackProgressEventArgs e, string endpoint, bool playedToCompletion, SessionState? state, bool periodic)
+    private async Task SendAsync(PlaybackProgressEventArgs e, string endpoint, bool playedToCompletion, SessionState? state, bool periodic, long? positionTicks)
     {
         var userIds = ResolveScrobblingLinkedUserIds(e.Users);
         if (periodic)
@@ -185,7 +191,7 @@ public sealed class PlaybackScrobbleService
             return;
         }
 
-        var request = BuildScrobbleRequest(e.Item, e.PlaybackPositionTicks, playedToCompletion);
+        var request = BuildScrobbleRequest(e.Item, positionTicks, playedToCompletion);
         if (request is null)
         {
             return;
