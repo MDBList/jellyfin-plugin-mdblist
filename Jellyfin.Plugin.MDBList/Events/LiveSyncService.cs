@@ -238,7 +238,12 @@ public class LiveSyncService
 
         // Saved as Import, which this service ignores above, so it doesn't
         // come back here as another push
-        _userDataManager.SaveUserData(user, item, data, UserDataSaveReason.Import, CancellationToken.None);
+        // If Jellyfin can't save it (logged), push the start time as before
+        if (!UserDataWriter.TrySave(_userDataManager, _logger, user, item, data))
+        {
+            return userData;
+        }
+
         return _userDataManager.GetUserData(user, item) ?? data;
     }
 

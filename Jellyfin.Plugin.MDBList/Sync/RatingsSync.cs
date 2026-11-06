@@ -328,7 +328,13 @@ public class RatingsSync
         var alreadyMatches = localRating == rating;
         if (!alreadyMatches)
         {
-            SetRating(user, match.ItemId, rating);
+            // A save Jellyfin refused (logged): not recorded as synced, so the
+            // next pull retries and nothing is pushed back.
+            if (!SetRating(user, match.ItemId, rating))
+            {
+                return false;
+            }
+
             changes.Current[match.ItemId] = rating;
         }
 
@@ -367,12 +373,12 @@ public class RatingsSync
         changes.Removed.Clear();
     }
 
-    private void SetRating(User user, Guid itemId, int rating)
+    private bool SetRating(User user, Guid itemId, int rating)
     {
         var item = _libraryManager.GetItemById(itemId);
         if (item is null)
         {
-            return;
+            return true;
         }
 
         var userData = _userDataManager.GetUserData(user, item) ?? new UserItemData { Key = item.GetUserDataKeys().First() };
@@ -381,7 +387,7 @@ public class RatingsSync
         // legal (if unusual) low rating and would read back as one.
         userData.Rating = rating > 0 ? rating : null;
 
-        _userDataManager.SaveUserData(user, item, userData, UserDataSaveReason.Import, CancellationToken.None);
+        return UserDataWriter.TrySave(_userDataManager, _logger, user, item, userData);
     }
 
     private static int ToApiRating(double? rating)
