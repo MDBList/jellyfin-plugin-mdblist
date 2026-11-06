@@ -229,19 +229,22 @@ public class LiveSyncService
             return userData;
         }
 
-        // A fresh copy, not the event's object Jellyfin may still hold
+        // The current data, which can be Jellyfin's cached instance -- and the
+        // same object as userData
         var data = _userDataManager.GetUserData(user, item) ?? userData;
+        var startedAt = data.LastPlayedDate;
 
         // Whole seconds, MDBList's precision, so the stored value and the
         // pushed one compare equal on the next full sync
         data.LastPlayedDate = new DateTime(finishedAt.Ticks - (finishedAt.Ticks % TimeSpan.TicksPerSecond), DateTimeKind.Utc);
 
         // Saved as Import, which this service ignores above, so it doesn't
-        // come back here as another push
-        // If Jellyfin can't save it (logged), push the start time as before
+        // come back here as another push. If Jellyfin can't save it (logged),
+        // the start time is put back and pushed, as before.
         if (!UserDataWriter.TrySave(_userDataManager, _logger, user, item, data))
         {
-            return userData;
+            data.LastPlayedDate = startedAt;
+            return data;
         }
 
         return _userDataManager.GetUserData(user, item) ?? data;

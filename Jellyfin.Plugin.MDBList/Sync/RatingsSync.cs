@@ -329,7 +329,8 @@ public class RatingsSync
         if (!alreadyMatches)
         {
             // A save Jellyfin refused (logged): not recorded as synced, so the
-            // next pull retries and nothing is pushed back.
+            // nothing is pushed back; a full pull retries it (an incremental
+            // one has moved past it).
             if (!SetRating(user, match.ItemId, rating))
             {
                 return false;
@@ -385,9 +386,17 @@ public class RatingsSync
 
         // 0 means "unrated" -- must map to null, not 0, which is itself a
         // legal (if unusual) low rating and would read back as one.
+        // Put back if the save fails: this can be Jellyfin's cached instance
+        var oldRating = userData.Rating;
         userData.Rating = rating > 0 ? rating : null;
 
-        return UserDataWriter.TrySave(_userDataManager, _logger, user, item, userData);
+        if (!UserDataWriter.TrySave(_userDataManager, _logger, user, item, userData))
+        {
+            userData.Rating = oldRating;
+            return false;
+        }
+
+        return true;
     }
 
     private static int ToApiRating(double? rating)

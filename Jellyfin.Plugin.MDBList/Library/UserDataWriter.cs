@@ -36,8 +36,10 @@ internal static class UserDataWriter
             userDataManager.SaveUserData(user, item, userData, UserDataSaveReason.Import, CancellationToken.None);
             return true;
         }
-        catch (InvalidOperationException ex)
+        catch (InvalidOperationException ex) when (ex is not ObjectDisposedException)
         {
+            // Not ObjectDisposedException: that's Jellyfin shutting down, which
+            // should end the sync, not log every remaining item as unsaveable
             var keys = item.GetUserDataKeys();
             var duplicates = FindDuplicateKeys(keys);
             logger.LogWarning(

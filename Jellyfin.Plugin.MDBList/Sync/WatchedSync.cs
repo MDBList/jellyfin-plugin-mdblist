@@ -584,7 +584,8 @@ public class WatchedSync
         // known-items state: without it the next push diffs a pulled watch as a
         // new local one and pushes it back -- undoing a later remote unwatch.
         // A save Jellyfin refused (logged) leaves both sides as they were: not
-        // recorded as synced, so nothing is pushed back and the next pull retries.
+        // recorded as synced, so nothing is pushed back; a full pull retries it
+        // (an incremental one has moved past it).
         if (removed)
         {
             if (!SetWatched(user, record.ItemId, played: false, playCount: 0, lastPlayedDate: null).Saved)
@@ -686,7 +687,10 @@ public class WatchedSync
             return (true, lastPlayedDate);
         }
 
+        // GetUserData can hand back Jellyfin's cached instance: what's changed
+        // on it is put back if the save fails, or the cache would show it
         var userData = _userDataManager.GetUserData(user, item) ?? new UserItemData { Key = item.GetUserDataKeys().First() };
+        var (oldPlayed, oldPlayCount, oldLastPlayed) = (userData.Played, userData.PlayCount, userData.LastPlayedDate);
         userData.Played = played;
         userData.PlayCount = playCount;
 
@@ -700,6 +704,7 @@ public class WatchedSync
 
         if (!UserDataWriter.TrySave(_userDataManager, _logger, user, item, userData))
         {
+            (userData.Played, userData.PlayCount, userData.LastPlayedDate) = (oldPlayed, oldPlayCount, oldLastPlayed);
             return (false, lastPlayedDate);
         }
 
