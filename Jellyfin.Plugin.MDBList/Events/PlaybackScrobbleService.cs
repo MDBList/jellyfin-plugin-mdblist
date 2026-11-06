@@ -191,7 +191,19 @@ public sealed class PlaybackScrobbleService
     // positionTicks: the position to send, when not the event's own
     private void Dispatch(PlaybackProgressEventArgs e, string endpoint, bool playedToCompletion, SessionState? state = null, bool periodic = false, long? positionTicks = null)
     {
-        _ = Task.Run(() => SendAsync(e, endpoint, playedToCompletion, state, periodic, positionTicks ?? e.PlaybackPositionTicks));
+        _ = Task.Run(async () =>
+        {
+            // Fire and forget: anything thrown here would otherwise be lost
+            // without a trace (API errors are already handled per user below)
+            try
+            {
+                await SendAsync(e, endpoint, playedToCompletion, state, periodic, positionTicks ?? e.PlaybackPositionTicks).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "MDBList scrobble {Endpoint} for {Item} failed", endpoint, e.Item?.Name);
+            }
+        });
     }
 
     private async Task SendAsync(PlaybackProgressEventArgs e, string endpoint, bool playedToCompletion, SessionState? state, bool periodic, long? positionTicks)
@@ -219,11 +231,11 @@ public sealed class PlaybackScrobbleService
         // just the first one found overall.
         foreach (var userId in userIds)
         {
-            await SendForUserAsync(userId, endpoint, request, state).ConfigureAwait(false);
+            await SendForUserAsync(userId, endpoint, request, state, e.Item?.Name).ConfigureAwait(false);
         }
     }
 
-    private async Task SendForUserAsync(Guid userId, string endpoint, ScrobbleRequest request, SessionState? state)
+    private async Task SendForUserAsync(Guid userId, string endpoint, ScrobbleRequest request, SessionState? state, string? itemName)
     {
         try
         {
@@ -237,9 +249,13 @@ public sealed class PlaybackScrobbleService
             // marks the title watched); a start/pause would land stale, and
             // possibly after a later stop
             await _apiClient.PushSyncItemsAsync(accessToken, endpoint, request, CancellationToken.None, retryRateLimit: endpoint == StopEndpoint).ConfigureAwait(false);
+            _logger.LogDebug("MDBList scrobble {Endpoint} for {Item} at {Progress}% sent for user {UserId}", endpoint, itemName, request.Progress, userId);
         }
         catch (MDBListApiException ex)
         {
+            // A 429 or a title MDBList doesn't know is expected and handled
+            // here; anything else is a real failure, worth a warning
+            var expected = ex.IsRateLimited || ex.StatusCode == HttpStatusCode.NotFound;
             if (ex.IsRateLimited)
             {
                 _pausedUntil[userId] = DateTime.UtcNow + (ex.RetryAfter ?? RateLimitPause);
@@ -249,7 +265,13 @@ public sealed class PlaybackScrobbleService
                 state.TitleUnknown = true;
             }
 
-            _logger.LogDebug(ex, "MDBList scrobble push to {Endpoint} failed for user {UserId}", endpoint, userId);
+            _logger.Log(
+                expected ? LogLevel.Debug : LogLevel.Warning,
+                ex,
+                "MDBList scrobble {Endpoint} for {Item} failed for user {UserId}",
+                endpoint,
+                itemName,
+                userId);
         }
     }
 
