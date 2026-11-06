@@ -1,7 +1,7 @@
 ---
 name: "MDBList"
 guid: "cbca79d7-ecde-4030-833c-3862f3c3a737"
-version: "1.0.0.20"
+version: "1.0.0.21"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 overview: "Two-way sync of watched status and ratings, plus collection sync, against MDBList"
@@ -15,6 +15,16 @@ owner: "linaspurinis"
 artifacts:
 - "Jellyfin.Plugin.MDBList.dll"
 changelog: >
+  1.0.0.21: Fixed the scrobble start not being sent when a client starts
+  playback from the beginning without reporting a position, which left
+  MDBList unaware of the playback for up to 15 minutes. Pre-rolls (cinema
+  mode intros), trailers and other extras are no longer scrobbled. Failed
+  scrobbles are now logged as warnings, and one user's failure no longer
+  stops the scrobble for others on the same session. An item that can't
+  be saved no longer leaves Jellyfin showing the unsaved change until
+  restart. Thanks to mattsigal for the scrobbling report and fixes (PR #3).
+
+
   1.0.0.20: Fixed watched sync failing every run (and "Sync failed to
   start") when Jellyfin can't save one item's user data, e.g. an episode
   whose metadata gives it the same user data key twice. That item is now
